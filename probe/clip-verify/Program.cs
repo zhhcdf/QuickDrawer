@@ -65,15 +65,15 @@ internal static class Program
         // the WM_CLIPBOARDUPDATE message is never pumped to our hook.
         for (int i = 1; i <= 3; i++)
         {
-            RunOnUi(app, () => Clipboard.SetText($"clip-verify-{i}-{Guid.NewGuid():N}"));
+            SetTextRetry(app, $"clip-verify-{i}-{Guid.NewGuid():N}");
             Pump(app, 700);
         }
 
         // dedupe: same content again must NOT create a new entry
         string dup = "clip-verify-dup-" + Guid.NewGuid().ToString("N");
-        RunOnUi(app, () => Clipboard.SetText(dup));
+        SetTextRetry(app, dup);
         Pump(app, 700);
-        RunOnUi(app, () => Clipboard.SetText(dup));
+        SetTextRetry(app, dup);
         Pump(app, 900);
 
         lock (captured)
@@ -113,7 +113,7 @@ internal static class Program
         svc2.Start(hwnd, source);
         for (int i = 1; i <= 8; i++)
         {
-            RunOnUi(app, () => Clipboard.SetText($"evict-test-{i}"));
+            SetTextRetry(app, $"evict-test-{i}");
             Pump(app, 450);
         }
         Pump(app, 800);
@@ -167,6 +167,69 @@ internal static class Program
     private static void RunOnUi(Application app, Action action)
     {
         app.Dispatcher.Invoke(action);
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetClipboardOwner();
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetOpenClipboardWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+
+    /// <summary>
+    /// 谁在占着剪贴板。GetOpenClipboardWindow 拿到的是**当前打开**剪贴板的那扇窗，
+    /// 比 GetClipboardOwner（只在有空格式数据时才有值）更能定位长时间占用者。
+    /// </summary>
+    private static string DescribeClipboardOwner()
+    {
+        IntPtr owner = GetClipboardOwner();
+        IntPtr open = GetOpenClipboardWindow();
+        string where = "owner=none";
+        if (open != IntPtr.Zero)
+        {
+            GetWindowThreadProcessId(open, out uint pid);
+            string name = "?";
+            try { if (pid != 0) name = Process.GetProcessById((int)pid).ProcessName; } catch { }
+            where = $"openWindow=0x{open.ToInt64():X} pid={pid} ({name})";
+        }
+        return $"{where} owner=0x{owner.ToInt64():X}";
+    }
+
+    /// <summary>
+    /// Clipboard.SetText 会直接抛 COMException CLIPBRD_E_CANT_OPEN (0x800401D0)，
+    /// 只要此刻别的进程（QuickDrawer 的格式监听、输入法、浏览器）占着剪贴板。
+    /// 这不是被测代码的缺陷，探针必须自己重试，否则一出偶发占用就整个崩掉。
+    ///
+    /// 实测（2026-11-07）：同样代码会出现两次运行一次 PASS 一次崩掉，
+    /// 说明 20 次 x 100ms = 2s 的重试窗口不够；提到 60 次（6s）并在每次
+    /// 失败时打印占用者，崩溃时也能知道是谁卡住了剪贴板，而不是只看到 HRESULT。
+    /// </summary>
+    private static void SetTextRetry(Application app, string text)
+    {
+        const int maxAttempts = 60;
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                RunOnUi(app, () => Clipboard.SetText(text));
+                return;
+            }
+            catch (COMException ex) when (attempt < maxAttempts && (uint)ex.HResult == 0x800401D0)
+            {
+                if (attempt == 1 || attempt % 10 == 0)
+                {
+                    Console.WriteLine($"  clipboard busy, attempt {attempt}/{maxAttempts}: {DescribeClipboardOwner()}");
+                }
+                Thread.Sleep(100);
+            }
+            catch (COMException ex) when ((uint)ex.HResult == 0x800401D0)
+            {
+                throw new InvalidOperationException(
+                    $"clipboard stayed locked for {maxAttempts * 100} ms: {DescribeClipboardOwner()}", ex);
+            }
+        }
     }
 
     /// <summary>

@@ -1,10 +1,15 @@
-# Verify the SHIPPED WriteBack implementation for Html/Rtf.
+﻿# Verify the SHIPPED WriteBack implementation for Html/Rtf.
 #
 # Loads the real QuickDrawer.exe assembly and calls ClipboardService.WriteBack,
 # then parses the resulting "HTML Format" payload back out and checks that the
 # StartFragment/EndFragment offsets actually point at the fragment. Getting those
 # offsets wrong makes Word silently paste plain text, which is exactly the bug
 # being fixed -- so they must be validated, not assumed.
+#
+# 2026-11-07 regression: WriteBack used to publish ONLY the rich format, so
+# Notepad / browser inputs / chat boxes pasted nothing while Word was fine.
+# The script therefore also asserts that CF_UNICODETEXT is present and carries
+# the full text -- checking only the CF_HTML offsets is what let the bug ship.
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
@@ -27,6 +32,13 @@ $entry = [System.Activator]::CreateInstance($entryType)
 $entry.Kind = [System.Enum]::Parse($kindType, 'Html')
 $entry.Text = '<table border=1><tr><td>A1</td><td>B1</td></tr><tr><td>A2</td><td>B2</td></tr></table>'
 $entry.Preview = 'A1 B1 A2 B2'
+# PlainText 留空：这是历史条目（本次修复之前存盘的那些）的真实形态，
+# 写回时必须从 HTML 现场反推出纯文本，否则老历史仍然粘不出来。
+# 旧版本的程序集没有这个属性（正是待验证的 bug），所以按存在性赋值，
+# 让本脚本也能对着旧 exe 跑出 FAIL，而不是在这里抛异常。
+if ($entryType.GetProperty('PlainText')) {
+    $entry.PlainText = $null
+}
 
 $ok = $svc::WriteBack($entry)
 Write-Host ("WriteBack(Html) returned: {0}" -f $ok)
@@ -67,6 +79,21 @@ public static class ClipHtml {
                 if (n < 0) n = size;
                 return System.Text.Encoding.UTF8.GetString(buf, 0, n);
             } finally { GlobalUnlock(h); }
+        } finally { CloseClipboard(); }
+    }
+
+    // CF_UNICODETEXT (13). This is what every non-rich target reads, so its
+    // presence is the actual user-facing fix -- offsets mean nothing if only
+    // Word can see the payload.
+    public static string ReadPlainText() {
+        if (!OpenClipboard(IntPtr.Zero)) return null;
+        try {
+            IntPtr h = GetClipboardData(13);
+            if (h == IntPtr.Zero) return null;
+            IntPtr p = GlobalLock(h);
+            if (p == IntPtr.Zero) return null;
+            try { return Marshal.PtrToStringUni(p); }
+            finally { GlobalUnlock(h); }
         } finally { CloseClipboard(); }
     }
 }
@@ -137,6 +164,29 @@ if ($startFrag -ge 0 -and $endFrag -gt $startFrag -and $endFrag -le $bytes.Lengt
 
 # 4. EndHTML must equal the total byte length.
 $checks += ,@('EndHTML == payload length', ($endHtml -eq $bytes.Length), "endHtml=$endHtml len=$($bytes.Length)")
+
+# 5. The 2026-11-07 regression: CF_UNICODETEXT must accompany the rich format.
+#    Without it Notepad / browser inputs / chat boxes paste NOTHING (Word is the
+#    only common app that reads CF_HTML). Offsets above can all be perfect while
+#    this is missing -- that combination is exactly what shipped.
+$plainRaw = [ClipHtml]::ReadPlainText()
+$hasPlain = -not [string]::IsNullOrEmpty($plainRaw)
+$checks += ,@('CF_UNICODETEXT present', $hasPlain, $(if ($hasPlain) { "$($plainRaw.Length) chars" } else { 'MISSING - only Word could paste this' }))
+
+if ($hasPlain) {
+    # 6. It must be the FULL text, not the 200-char list preview.
+    $entryPreview = $entry.Preview
+    $isPreviewOnly = ($plainRaw.Trim() -eq $entryPreview.Trim())
+    $checks += ,@('plain text is not the preview', (-not $isPreviewOnly), "plain='$($plainRaw -replace "`r",'\r' -replace "`n",'\n' -replace "`t",'\t' -replace "`0",'' )'")
+
+    # 7. It must be plain text, not the HTML fragment passed through.
+    $noTags = ($plainRaw -notmatch '<[a-zA-Z/!]')
+    $checks += ,@('plain text has no markup', $noTags, "contains '<' tags: $(-not $noTags)")
+
+    # 8. Derived from HTML: table cells -> TAB, rows -> CRLF, no trailing newline.
+    $expectedPlain = "A1`tB1`r`nA2`tB2"
+    $checks += ,@('derived text is TAB/CRLF joined', ($plainRaw -eq $expectedPlain), "expected='$($expectedPlain -replace "`t",'\t' -replace "`r",'\r' -replace "`n",'\n' )'")
+}
 
 Write-Host ''
 $allOk = $true

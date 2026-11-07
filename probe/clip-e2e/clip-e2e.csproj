@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableComInterop>true</EnableComInterop>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="Stubs.cs" />
+    <Compile Include="D:\Documents\DeepSeek\快捷桌面项目\src\QuickDrawer\DiagLog.cs" />
+    <Compile Include="D:\Documents\DeepSeek\快捷桌面项目\src\QuickDrawer\ShellLink.cs" />
+    <Compile Include="D:\Documents\DeepSeek\快捷桌面项目\src\QuickDrawer\IconService.cs" />
+    <Compile Include="D:\Documents\DeepSeek\快捷桌面项目\src\QuickDrawer\ShortcutStore.cs" />
+    <Compile Include="D:\Documents\DeepSeek\快捷桌面项目\src\QuickDrawer\ClipboardService.cs" />
+    <Compile Include="D:\Documents\DeepSeek\快捷桌面项目\src\QuickDrawer\ClipboardStore.cs" />
+    <Compile Include="D:\Documents\DeepSeek\快捷桌面项目\src\QuickDrawer\ClipboardBlobStore.cs" />
+    <Compile Include="D:\Documents\DeepSeek\快捷桌面项目\src\QuickDrawer\Config.cs" />
+    <Compile Include="D:\Documents\DeepSeek\快捷桌面项目\src\QuickDrawer\Native\Native.cs" />
+    <Compile Include="D:\Documents\DeepSeek\快捷桌面项目\src\QuickDrawer\Compat.cs" />
+    <Compile Include="D:\Documents\DeepSeek\快捷桌面项目\src\QuickDrawer\CorruptFile.cs" />
+  </ItemGroup>
+</Project>

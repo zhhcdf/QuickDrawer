@@ -48,6 +48,12 @@ public static class ClipboardStore
 
         /// <summary>HTML 条目的 &lt;style&gt; 块。旧文件没有这个字段，反序列化后为 null。</summary>
         public string? HtmlStyle { get; set; }
+
+        /// <summary>
+        /// 富格式条目（Html / Rtf）伴随的纯文本。
+        /// 旧文件没有这个字段，反序列化后为 null —— 写回时现场从富格式反推，不会丢内容。
+        /// </summary>
+        public string? PlainText { get; set; }
     }
 
     /// <summary>磁盘上的记录格式（内容字段是密文）。</summary>
@@ -93,7 +99,8 @@ public static class ClipboardStore
     {
         public ClipSnapshot(string id, string kind, string? text, string preview,
             List<string> files, string sourceApp, string? blobPath, bool pinned,
-            string createdAt, long sizeBytes, string? htmlStyle = null)
+            string createdAt, long sizeBytes, string? htmlStyle = null,
+            string? plainText = null)
         {
             Id = id;
             Kind = kind;
@@ -106,6 +113,7 @@ public static class ClipboardStore
             CreatedAt = createdAt;
             SizeBytes = sizeBytes;
             HtmlStyle = htmlStyle;
+            PlainText = plainText;
         }
 
         public string Id { get; }
@@ -119,6 +127,7 @@ public static class ClipboardStore
         public string CreatedAt { get; }
         public long SizeBytes { get; }
         public string? HtmlStyle { get; }
+        public string? PlainText { get; }
     }
 
     /// <summary>
@@ -142,7 +151,8 @@ public static class ClipboardStore
                 e.Pinned,
                 e.CreatedAt.ToString("o"),
                 e.SizeBytes,
-                e.HtmlStyle));
+                e.HtmlStyle,
+                e.PlainText));
         }
 
         return snaps;
@@ -180,7 +190,8 @@ public static class ClipboardStore
                     Preview = e.Preview,
                     Files = e.Files,
                     SourceApp = e.SourceApp,
-                    HtmlStyle = e.HtmlStyle
+                    HtmlStyle = e.HtmlStyle,
+                    PlainText = e.PlainText
                 };
                 s.EncryptedPayload = Protect(JsonSerializer.Serialize(payload, JsonOptions));
 
@@ -255,6 +266,7 @@ public static class ClipboardStore
                                 e.Files = payload.Files ?? new List<string>();
                                 e.SourceApp = payload.SourceApp ?? "";
                                 e.HtmlStyle = payload.HtmlStyle;
+                                e.PlainText = payload.PlainText;
                                 payloadOk = true;
                             }
                         }

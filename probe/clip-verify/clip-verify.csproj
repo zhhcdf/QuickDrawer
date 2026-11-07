@@ -20,5 +20,7 @@
     <Compile Include="D:\Documents\DeepSeek\快捷桌面项目\src\QuickDrawer\ClipboardBlobStore.cs" />
     <Compile Include="D:\Documents\DeepSeek\快捷桌面项目\src\QuickDrawer\Config.cs" />
     <Compile Include="D:\Documents\DeepSeek\快捷桌面项目\src\QuickDrawer\Native\Native.cs" />
+    <Compile Include="D:\Documents\DeepSeek\快捷桌面项目\src\QuickDrawer\Compat.cs" />
+    <Compile Include="D:\Documents\DeepSeek\快捷桌面项目\src\QuickDrawer\CorruptFile.cs" />
   </ItemGroup>
 </Project>

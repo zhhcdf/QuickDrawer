@@ -89,6 +89,21 @@ public sealed class ClipEntry : INotifyPropertyChanged
     /// </summary>
     public string? HtmlStyle { get; set; }
 
+    /// <summary>
+    /// 富格式条目（Html / Rtf）**伴随的纯文本**，写回时同时放到 CF_UNICODETEXT。
+    ///
+    /// 为什么必须有：Rich 格式与纯文本在剪贴板上是**并列的两种格式**，不是替代关系。
+    /// 只写 "HTML Format" 时，Word / WordPad 这类认 CF_HTML 的程序能粘，
+    /// 而记事本、浏览器输入框、聊天框、终端、多数编辑器只读 CF_UNICODETEXT，
+    /// 于是"点了历史记录却粘不出东西"（用户 2026-11-07 报：Obsidian 复制的内容
+    /// 只有 Word 能粘贴）。
+    ///
+    /// 捕获时优先取源程序同时放进剪贴板的 CF_UNICODETEXT（最忠实），
+    /// 拿不到才从 HTML / RTF 反推。旧历史文件没有这个字段，为 null 时写回
+    /// 现场反推一份，保证升级后老条目也能粘贴。
+    /// </summary>
+    public string? PlainText { get; set; }
+
     /// <summary>占用字节数估算（用于容量控制）。</summary>
     /// <summary>
     /// 条目大小（字节）。2026-11-01 审查 S9：从 int 改成 long。
@@ -643,7 +658,18 @@ public sealed class ClipboardService : IDisposable
         }
     }
 
-    private ClipEntry? ReadText()
+    /// <summary>
+    /// 读剪贴板上的纯文本兄弟格式（CF_UNICODETEXT → CF_TEXT → CF_OEMTEXT）。
+    /// 调用方必须已持有剪贴板。
+    ///
+    /// 单独抽出来是因为它有两个使用者：
+    ///   1. ReadText —— 整条内容就是纯文本；
+    ///   2. ReadHtml / ReadRtf —— 富格式条目要顺便把**同一份复制操作里的纯文本**
+    ///      留一份（ClipEntry.PlainText），写回时一起放到剪贴板。
+    /// 源程序写的纯文本比我们从 HTML/RTF 反推的忠实（保留换行、列表、制表），
+    /// 能拿到就不要自己造。
+    /// </summary>
+    private static string? ReadPlainTextFromClipboard()
     {
         IntPtr h = NativeMethods.GetClipboardData(NativeMethods.CF_UNICODETEXT);
         bool ansi = false;
@@ -677,24 +703,33 @@ public sealed class ClipboardService : IDisposable
         try
         {
             string? s = ansi ? Marshal.PtrToStringAnsi(p) : Marshal.PtrToStringUni(p);
-            if (string.IsNullOrEmpty(s))
-            {
-                return null;
-            }
-
-            return new ClipEntry
-            {
-                Kind = ClipKind.Text,
-                Text = s,
-                Preview = Truncate(s.Replace('\r', ' ').Replace('\n', ' ').Trim(), 200),
-                SourceApp = GetSourceApp(),
-                SizeBytes = (long)s.Length * 2
-            };
+            return string.IsNullOrEmpty(s) ? null : s;
         }
         finally
         {
             NativeMethods.GlobalUnlock(h);
         }
+    }
+
+    private ClipEntry? ReadText()
+    {
+        string? s = ReadPlainTextFromClipboard();
+        // 写成 s is null || s.Length == 0 而不是 string.IsNullOrEmpty：
+        // net48 的参考程序集没有 [NotNullWhen(false)] 标注，编译器无法据此收窄类型，
+        // 会误报 CS8602（已实测）。
+        if (s is null || s.Length == 0)
+        {
+            return null;
+        }
+
+        return new ClipEntry
+        {
+            Kind = ClipKind.Text,
+            Text = s,
+            Preview = Truncate(s.Replace('\r', ' ').Replace('\n', ' ').Trim(), 200),
+            SourceApp = GetSourceApp(),
+            SizeBytes = (long)s.Length * 2
+        };
     }
 
     private ClipEntry? ReadHtml()
@@ -744,6 +779,14 @@ public sealed class ClipboardService : IDisposable
                 return null;
             }
 
+            // 富格式条目必须留一份纯文本伴随格式（理由见 ClipEntry.PlainText）：
+            // 优先用源程序自己放的 CF_UNICODETEXT，拿不到才从片段反推。
+            string? plain = ReadPlainTextFromClipboard();
+            if (string.IsNullOrEmpty(plain))
+            {
+                plain = HtmlToPlainText(fragment);
+            }
+
             return new ClipEntry
             {
                 Kind = ClipKind.Html,
@@ -751,9 +794,10 @@ public sealed class ClipboardService : IDisposable
                 // <head> 里的 <style> 块。Word/Excel 用 class=xl65 之类引用它里面的边框定义，
                 // 只写回片段的话这些 class 没有定义，粘出来就没有表格样式。
                 HtmlStyle = style,
+                PlainText = plain,
                 Preview = BuildHtmlPreview(fragment),
                 SourceApp = GetSourceApp(),
-                SizeBytes = (long)fragment.Length * 2
+                SizeBytes = (long)fragment.Length * 2 + (long)(plain?.Length ?? 0) * 2
             };
         }
         finally
@@ -795,10 +839,17 @@ public sealed class ClipboardService : IDisposable
                 return null;
             }
 
+            // 与 Html 同理：RTF 也得配一份纯文本，否则记事本 / 浏览器 / 聊天框粘不出来。
+            // 用 IsNullOrEmpty：源程序给了空 CF_UNICODETEXT 时也要回退到自己去 RTF 里剥，
+            // 否则会留下一个"看着有、粘出来是空"的条目。
+            string? sibling = ReadPlainTextFromClipboard();
+            string plain = string.IsNullOrEmpty(sibling) ? StripRtf(s) : sibling!;
+
             return new ClipEntry
             {
                 Kind = ClipKind.Rtf,
                 Text = s,
+                PlainText = plain,
                 Preview = Truncate(StripRtf(s), 200),
                 SourceApp = GetSourceApp(),
                 SizeBytes = (long)s.Length * 2
@@ -1288,27 +1339,10 @@ public sealed class ClipboardService : IDisposable
                 {
                     case ClipKind.Text:
                     {
-                        string text = entry.Text ?? "";
-                        IntPtr mem = NativeMethods.GlobalAlloc(NativeMethods.GMEM_MOVEABLE,
-                            (UIntPtr)((text.Length + 1) * 2));
-                        if (mem == IntPtr.Zero) return false;
-
-                        IntPtr p = NativeMethods.GlobalLock(mem);
-                        try
-                        {
-                            // ⚠️ 必须写 UTF-16 字节。用 Marshal.Copy(char[], ...) 会按
-                            // 1 字节/元素复制，高字节全丢，中文会变成乱码
-                            // （2026-10-20 探针实测：write-back 回来的内容为空/乱码）。
-                            byte[] utf16 = Encoding.Unicode.GetBytes(text + "\0");
-                            Marshal.Copy(utf16, 0, p, utf16.Length);
-                        }
-                        finally
-                        {
-                            NativeMethods.GlobalUnlock(mem);
-                        }
-
-                        NativeMethods.SetClipboardData(NativeMethods.CF_UNICODETEXT, mem);
-                        return true;
+                        // 复用 WriteTextPayload —— 它已经处理了"必须写 UTF-16 字节"这个坑
+                        // （2026-10-20 探针：Marshal.Copy(char[]) 会按 1 字节/元素复制，
+                        // 高字节全丢，中文变乱码）。原来这里内联了一份同样的代码。
+                        return WriteTextPayload(entry.Text ?? "");
                     }
 
                     case ClipKind.Files:
@@ -1380,14 +1414,35 @@ public sealed class ClipboardService : IDisposable
 
                     case ClipKind.Html:
                     {
+                        // 先写纯文本，再写 HTML。
+                        //
+                        // ⚠️ 顺序不能反。EmptyClipboard 之后两种格式各自 SetClipboardData，
+                        // 谁先谁后都合法；但**只写 HTML 不写纯文本**会让记事本、浏览器
+                        // 输入框、聊天框、终端、多数编辑器全都粘不出来 —— 它们只读
+                        // CF_UNICODETEXT（用户 2026-11-07 报的"只有 Word 能粘贴"就是这个）。
+                        //
+                        // 纯文本取 entry.PlainText（捕获时留的源程序原文）；
+                        // 旧历史文件没有这个字段，现场从 HTML 反推一份，保证老条目也能粘。
+                        //
+                        // 注意用 IsNullOrEmpty 而不是 ??：PlainText 完全可能是**空串**
+                        // 而不是 null（JSON 里是 ""、或反序列化后落到 string.Empty）。
+                        // 用 ?? 时空串不会触发回退，结果就是不写纯文本 —— 本 bug 原样复活。
+                        string plain = string.IsNullOrEmpty(entry.PlainText)
+                            ? HtmlToPlainText(entry.Text ?? "")
+                            : entry.PlainText!;
+                        if (plain.Length > 0)
+                        {
+                            WriteTextPayload(plain);
+                        }
+
                         if (WriteHtmlPayload(entry.Text ?? "", entry.HtmlStyle))
                         {
                             return true;
                         }
 
-                        // HTML 写失败就退回纯文本：内容还在，只是丢了格式。
-                        string preview = entry.Preview ?? "";
-                        return preview.Length > 0 && WriteTextPayload(preview);
+                        // HTML 写失败时纯文本已经在剪贴板上了（若上面写成功），
+                        // 内容还在，只是丢了格式。
+                        return plain.Length > 0;
                     }
 
                     case ClipKind.Rtf:
@@ -1398,6 +1453,16 @@ public sealed class ClipboardService : IDisposable
 
                         uint rtfId = NativeMethods.RtfFormat;
                         if (rtfId == 0) return false;
+
+                        // 同 Html：纯文本必须一起给，否则非 Word 程序粘不出来。
+                        // 同样用 IsNullOrEmpty：空串不能当"有纯文本"。
+                        string plain = string.IsNullOrEmpty(entry.PlainText)
+                            ? StripRtf(rtf)
+                            : entry.PlainText!;
+                        if (plain.Length > 0)
+                        {
+                            WriteTextPayload(plain);
+                        }
 
                         // RTF 是面向字节的格式（控制字 7-bit + 正文按 ANSI 码页），
                         // 在中文系统上 Encoding.Default 就是 GBK，与 Word 写入时一致。
@@ -1415,7 +1480,8 @@ public sealed class ClipboardService : IDisposable
                             NativeMethods.GlobalUnlock(mem);
                         }
 
-                        return NativeMethods.SetClipboardData(rtfId, mem) != IntPtr.Zero;
+                        bool ok = NativeMethods.SetClipboardData(rtfId, mem) != IntPtr.Zero;
+                        return ok || plain.Length > 0;
                     }
 
                     default:
@@ -1848,6 +1914,124 @@ public sealed class ClipboardService : IDisposable
         return string.Join("\n", lines);
     }
 
+    /// <summary>
+    /// 把 HTML 片段转成**带换行**的纯文本，用作富格式条目的伴随 CF_UNICODETEXT。
+    ///
+    /// 与 StripTags 的区别：StripTags 是给列表预览用的，它把标签直接扔掉，
+    /// 于是 "&lt;p&gt;第一段&lt;/p&gt;&lt;p&gt;第二段&lt;/p&gt;" 粘出来是 "第一段第二段" 连成一行。
+    /// 粘进记事本 / 聊天框时这是错的 —— 用户看到的是自己复制的多段内容，
+    /// 粘出来必须还是多行。所以这里把块级标签结尾换成换行、&lt;br&gt; 换成换行、
+    /// 表格单元格之间留分隔符。
+    /// </summary>
+    private static string HtmlToPlainText(string html)
+    {
+        if (string.IsNullOrEmpty(html))
+        {
+            return string.Empty;
+        }
+
+        var sb = new System.Text.StringBuilder(html.Length);
+        int i = 0;
+        while (i < html.Length)
+        {
+            if (html[i] != '<')
+            {
+                sb.Append(html[i]);
+                i++;
+                continue;
+            }
+
+            // 注释整段跳过：Obsidian 会在片段里塞 <!-- obsidian --> 之类标记，
+            // 按"到下一个 > 为止"处理会把注释体当正文留下来。
+            if (i + 3 < html.Length && html[i + 1] == '!' && html[i + 2] == '-' && html[i + 3] == '-')
+            {
+                int endComment = html.IndexOf("-->", i + 4, StringComparison.Ordinal);
+                i = endComment < 0 ? html.Length : endComment + 3;
+                continue;
+            }
+
+            int tagEnd = html.IndexOf('>', i + 1);
+            if (tagEnd < 0)
+            {
+                break;   // 残缺标签，后面的内容不可信，丢掉
+            }
+
+            string tag = html.Substring(i + 1, tagEnd - i - 1).Trim();
+            bool closing = tag.StartsWith("/", StringComparison.Ordinal);
+            string name = (closing ? tag.Substring(1) : tag).TrimStart();
+            int sp = name.IndexOfAny(new[] { ' ', '\t', '\r', '\n', '/' });
+            if (sp >= 0)
+            {
+                name = name.Substring(0, sp);
+            }
+
+            name = name.ToLowerInvariant();
+
+            if (name == "br")
+            {
+                sb.Append('\n');
+            }
+            else if (closing && (name == "p" || name == "div" || name == "li" || name == "tr"
+                              || name == "h1" || name == "h2" || name == "h3" || name == "h4"
+                              || name == "h5" || name == "h6" || name == "blockquote"
+                              || name == "pre" || name == "table" || name == "ul" || name == "ol"))
+            {
+                // 段落 / 列表项 / 表格行结束 → 换行。
+                // li 的换行在下面单独去掉重复，这里统一追加即可。
+                sb.Append('\n');
+            }
+            else if (closing && (name == "td" || name == "th"))
+            {
+                sb.Append('\t');   // 表格列之间用制表符，粘进 Excel / 记事本仍是一行
+            }
+
+            i = tagEnd + 1;
+        }
+
+        string text = System.Net.WebUtility.HtmlDecode(sb.ToString());
+
+        // 合并多余空行：块级标签连续出现时（如 </p></div>）会叠出空行，
+        // 粘出去一片空白比少一行更糟。最多保留一个空行。
+        var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        var outSb = new System.Text.StringBuilder(text.Length);
+        bool lastBlank = true;   // 开头的空行也压掉
+        foreach (string raw in lines)
+        {
+            string line = CleanLine(raw);
+            if (line.Length == 0)
+            {
+                if (!lastBlank)
+                {
+                    outSb.Append('\n');
+                    lastBlank = true;
+                }
+
+                continue;
+            }
+
+            if (outSb.Length > 0 && !lastBlank)
+            {
+                outSb.Append('\n');
+            }
+
+            outSb.Append(line);
+            lastBlank = false;
+        }
+
+        // 末尾的换行必须去掉：块级标签结尾会追一个 '\n'，粘进记事本 / 聊天框
+        // 就是多一个空行（探针实测：「发送」按钮 后面跟了一个看不见的换行）。
+        //
+        // 但对外必须输出 CRLF：上面统一按 '\n' 拼装只是为了好处理，
+        // 而 Windows 剪贴板里 CF_UNICODETEXT 的换行惯例是 "\r\n"。
+        // 只给 '\n' 时记事本看着没错，但很多控件（EDIT 单行、部分终端、
+        // 逐字符处理的脚本）会把 '\n' 当成空白而不是换行。
+        return outSb.ToString().TrimEnd('\n').Replace("\n", "\r\n");
+
+        // 不换行空格（&nbsp; 解码后是 \u00a0）在记事本里是不可见字符，
+        // 会让 trim 失效、行看起来是空的却不等于空串，统一换成普通空格。
+        static string CleanLine(string s) => s.Replace('\u00a0', ' ').Trim();
+    }
+
     private static string StripTags(string html)
     {
         var sb = new System.Text.StringBuilder(html.Length);
@@ -1992,12 +2176,30 @@ public sealed class ClipboardService : IDisposable
                         }
                     }
 
-                    // \ucN 声明的回退字符个数由后续 \'hh 序列补足，这里一并跳过，
-                    // 否则会重复输出（\u24207\'d0'f2 里 'd0'f2 就是回退）。
+                    // \ucN 声明的回退字符个数必须跳过：\uNNNN 后面跟着 N 个"给不支持
+                    // Unicode 的阅读器看的"替代字符，不跳就会被当成正文重复输出。
+                    //
+                    // 回退字符有两种写法，都要处理：
+                    //   \'hh  —— 十六进制字节（\u24207\'d0'f2）
+                    //   普通字符 —— 最常见的就是 Word 写的 \u20013?，那个 '?' 是占位符，
+                    //              以前只跳 \'hh，于是中文后面粘出一个 '?'。
                     int fallbacks = _rtfUcSkip;
-                    while (fallbacks > 0 && i + 3 < rtf.Length && rtf[i] == (char)92 && rtf[i + 1] == (char)39)
+                    while (fallbacks > 0 && i < rtf.Length)
                     {
-                        i += 4;
+                        if (rtf[i] == (char)92 && i + 3 < rtf.Length && rtf[i + 1] == (char)39)
+                        {
+                            i += 4;      // \'hh
+                            fallbacks--;
+                            continue;
+                        }
+
+                        // 遇到反斜杠说明后面是控制字（\par 之类），不是回退字符，停手。
+                        if (rtf[i] == (char)92 || rtf[i] == (char)123 || rtf[i] == (char)125)
+                        {
+                            break;
+                        }
+
+                        i++;
                         fallbacks--;
                     }
 
