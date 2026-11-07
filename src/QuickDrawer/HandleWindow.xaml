@@ -1,0 +1,25 @@
+<Window x:Class="QuickDrawer.HandleWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="QuickDrawer Handle"
+        Loaded="Handle_Loaded"
+        MouseEnter="Handle_MouseEnter"
+        MouseLeave="Handle_MouseLeave"
+        MouseLeftButtonDown="Handle_MouseLeftButtonDown">
+
+    <!-- 拉手本体：贴屏幕右边缘的一条圆角细条 -->
+    <Border x:Name="HandleBar"
+            Background="{DynamicResource PanelBackground}"
+            CornerRadius="3"
+            BorderBrush="{DynamicResource PanelBorder}"
+            BorderThickness="1">
+        <TextBlock x:Name="HandleGlyph"
+                   Text="‹"
+                   Foreground="{DynamicResource TextPrimary}"
+                   FontSize="12"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Opacity="0"
+                   Visibility="Collapsed"/>
+    </Border>
+</Window>

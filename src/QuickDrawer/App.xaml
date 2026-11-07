@@ -1,0 +1,32 @@
+<Application x:Class="QuickDrawer.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:QuickDrawer"
+             xmlns:sys="clr-namespace:System;assembly=mscorlib"
+             ShutdownMode="OnExplicitShutdown">
+    <!--
+        注意：不使用 StartupUri。
+        窗口改为在 App.OnStartup 中代码创建，确保配置先于窗口加载完成。
+    -->
+    <Application.Resources>
+        <local:BoolToVisConverter x:Key="BoolToVis"/>
+
+        <!--
+            便签正文字号（2026-11-03 用户需求："在设置里增加一项便签内容字体调节设置"）。
+
+            为什么放在 Application 级资源而不是给 DrawerWindow 加依赖属性：
+            卡片正文在 ListBox 的 DataTemplate 里，DataTemplate 的查找链是
+            "模板内部 -> 模板外层元素 -> Window -> Application"。走 Window 级
+            DependencyProperty 需要 RelativeSource 往上爬，模板一多就容易写错；
+            走 Application 资源则 DynamicResource 直接在模板里就能取到，
+            而且改一次全局即时生效（不需要重建卡片、不需要重启）。
+
+            这两个键由 DrawerWindow.ApplyNoteFontSize() 在启动和设置变更时写入，
+            值来自 AppConfig.Notes.FontSize。这里的数字只是"万一没被写过"的兜底，
+            取的是历史真实渲染值 12 / 20。
+        -->
+        <sys:Double x:Key="NoteBodyFontSize">12</sys:Double>
+        <sys:Double x:Key="NoteBodyLineHeight">20</sys:Double>
+        <sys:Double x:Key="NoteBodyMaxHeight">150</sys:Double>
+    </Application.Resources>
+</Application>

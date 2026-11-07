@@ -1,0 +1,125 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+
+    <!-- 2026-11-01：目标框架从 net10.0-windows 改为 net48。
+         原因与取舍见 README「体积」一节：自包含单文件 65.39 MB（其中 99.6% 是 .NET 运行时，
+         应用自身代码只有 253 KB），改用 .NET Framework 4.8 后交付体积约 2.8 MB。
+         .NET Framework 4.8 是 Win10 1903+ / Win11 的系统组件，仍满足「零特殊依赖」。 -->
+    <TargetFramework>net48</TargetFramework>
+
+    <!-- net48 的 C# 编译器默认语言版本偏旧，record/init/switch 表达式都要 latest。
+         注意：语言版本高不等于 BCL 齐全，缺失的 API 见下方 Compat.cs 说明。 -->
+    <LangVersion>latest</LangVersion>
+
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>QuickDrawer</AssemblyName>
+    <RootNamespace>QuickDrawer</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- 2026-11-01（发布前审查 B6）：exe 应用图标。
+         之前全项目没有任何 .ico，资源管理器/任务栏/属性对话框都显示
+         .NET 的通用默认图标（蓝方块+列表线），而托盘图标反而是程序化画的
+         品牌图标（TrayIcon.cs:100-135）—— 两者外观必须一致。
+         本文件由 probe/_b6_icon.py 生成，9 个尺寸 16→256。
+         改设计时请改脚本重新生成，不要手工编辑 .ico。 -->
+    <ApplicationIcon>assets/QuickDrawer.ico</ApplicationIcon>
+
+    <!-- 决策 #8：首发仅 x64。
+
+         2026-11-01 踩坑：光有 <Platforms> 不够。
+         <Platforms> 只是"这个工程可以构建哪些平台"的声明，不决定编译目标。
+         缺 <PlatformTarget> 时，net48 产物是 AnyCPU（在 x64 系统上跑成 64 位进程），
+         但 NuGet 会按默认 x86 挑原生资源，于是输出 x86 的 WebView2Loader.dll。
+         结果：助手页一打开就抛
+           BadImageFormatException 0x8007000B（试图加载格式不正确的程序）
+         其余功能全正常，只有 WebView2 相关的助手页挂 —— 因为只有它依赖那个原生 DLL。
+
+         判断程序集平台不能看 PE 的 COFF machine 字段（AnyCPU 的 exe 也是 0x14c），
+         要读 COR20 header 的 Flags。工具：probe/_pe_platform.py。
+
+         <PlatformTarget>x64</PlatformTarget> 同时做两件事：
+           1. 让 NuGet 选 runtimes/win-x64/native/WebView2Loader.dll
+           2. 让程序集带上 x64 标记，杜绝在 32 位宿主里被加载 -->
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+
+    <!-- net48 产物依赖系统自带的 .NET Framework，不能自包含。 -->
+    <SelfContained>false</SelfContained>
+
+    <!--
+      2026-11-01 移除的三项 net10 专用发布设置：
+        PublishSingleFile / EnableCompressionInSingleFile / IncludeNativeLibrariesForSelfExtract
+      net48 没有单文件发布能力（那是 .NET Core 3.0+ 的 Bundler）。
+      现在的交付形态是「18 个文件的文件夹」，用容器/压缩包分发即可。
+      这也顺带解决了 net10 单文件版每跑一次就在 %TEMP%\.net\QuickDrawer\ 下
+      解压一份原生库、实测累积到 66 个目录 319 MB 从不清理的问题。
+    -->
+
+    <!--
+      绝对不要设置 InvariantGlobalization=true（2026-10-18 实测崩溃）。
+      该设置会剥离所有区域信息，而 WPF 的数据绑定在 BindingExpressionBase.GetCulture()
+      里需要 CultureInfo，会抛：
+        "Cannot find non-neutral culture related to 'en-us'."
+      只要界面上有任何 {Binding}，程序就会在 Show() 时崩溃。
+    -->
+
+    <!--
+      ShellLinkResolver 通过 COM interop 调 IShellLinkW 解析 .lnk，
+      必须开启 EnableComInterop（2026-10-18 实测：手工解析二进制 31/31 全失败，
+      改用系统 COM 解析器后 29/31 通过，剩余 2 个是 UWP 虚拟对象）。
+    -->
+    <EnableComInterop>true</EnableComInterop>
+
+    <!--
+      不要设置 PublishTrimmed：WPF 明确不支持裁剪，且 COM interop 也需要内建互操作。
+      （dotnet publish -p:PublishTrimmed=true 在 net10 下直接被 SDK 拒绝：
+         error NETSDK1168: 启用剪裁时，不支持或不推荐使用 WPF）
+    -->
+
+    <Version>1.0.0</Version>
+    <!-- 显式写死四段版本号：只写 <Version> 时 SDK 会派生 1.0.0.0，
+         但显式声明可以避免以后改 Version 时忘了同步资源管理器里显示的 FileVersion。 -->
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Product>QuickDrawer</Product>
+    <Description>Windows desktop side drawer: directory shortcuts, app shortcuts, sticky notes, clipboard history.</Description>
+    <Company>QuickDrawer contributors</Company>
+    <Copyright>Copyright (c) 2026 QuickDrawer contributors. MIT License.</Copyright>
+  </PropertyGroup>
+
+  <!--
+    智能助手页（2026-10-26 需求）：内嵌 WebView2 集成 DeepSeek / Kimi / 智谱清言网页端。
+    版本对齐本机已安装的 WebView2 Runtime 156.0.4314.50（候选 1.0.4314.35）。
+    该包自带 net462 目标（~/.nuget/packages/microsoft.web.webview2/1.0.4314.35/lib/net462/），
+    net48 下无需任何额外适配即可用。
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+  </ItemGroup>
+
+  <!--
+    net48 下需要显式引入的 BCL 包：
+
+    System.Text.Json 9.0.0 —— .NET Framework 不自带，配置/便签/剪贴板三处序列化都靠它。
+      这是本产物里最大的单个 DLL（726 KB），也是 2.8 MB 里占比最高的一块。
+
+    System.Memory 4.5.5 —— System.Text.Json 的传递依赖（Span<T>/Memory<T> 在 net48 下没有）。
+
+    Microsoft.NETFramework.ReferenceAssemblies —— 让构建机即使没装 .NET Framework 目标包
+      也能编译（PrivateAssets=all，不进产物）。
+
+    System.Security —— DPAPI（决策 #7）用的 ProtectedData 在这个程序集里。
+  -->
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" Version="9.0.0" />
+    <PackageReference Include="System.Memory" Version="4.5.5" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="System.Security" />
+  </ItemGroup>
+
+</Project>

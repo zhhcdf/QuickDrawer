@@ -1,0 +1,265 @@
+<Window x:Class="QuickDrawer.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="QuickDrawer 设置"
+        Width="460" Height="780"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        Background="{DynamicResource DialogBackground}"
+        Closed="Window_Closed">
+
+    <Grid Margin="16">
+        <!-- 9 行：0 宽度 / 1 唤出热键 / 2 截图热键 / 3 便签字号 / 4 拉手 / 5 收起延迟 / 6 助手缩放 / 7 预设（占满）/ 8 状态
+             2026-11-01（三次）删掉「开机自启」那行后全部上移一行；
+             2026-11-01（七次）在热键下面插入「截图热键」一行，其后的行再下移一行；
+             2026-11-03 在截图热键下面插入「便签字号」一行，其后的行再下移一行。 -->
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- 面板宽度 -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,14">
+            <TextBlock Text="面板宽度" Foreground="{DynamicResource TextPrimary}" FontSize="13" Margin="0,0,0,6"/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Slider x:Name="WidthSlider" Grid.Column="0"
+                        Minimum="300" Maximum="560"
+                        IsSnapToTickEnabled="True" TickFrequency="10"
+                        ValueChanged="WidthSlider_ValueChanged"/>
+                <TextBlock x:Name="WidthText" Grid.Column="1"
+                           Text="380" Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                           VerticalAlignment="Center" Margin="10,0,0,0" Width="44"/>
+            </Grid>
+        </StackPanel>
+
+        <!-- 热键 -->
+        <StackPanel Grid.Row="1" Margin="0,0,0,14">
+            <TextBlock Text="唤出热键" Foreground="{DynamicResource TextPrimary}" FontSize="13" Margin="0,0,0,6"/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Border Background="{DynamicResource ControlFillStrong}" CornerRadius="4" Padding="10,7" Grid.Column="0">
+                    <TextBlock x:Name="HotkeyText" Text="Win+Alt+N"
+                               Foreground="{DynamicResource TextPrimary}" FontSize="13"/>
+                </Border>
+                <Button x:Name="HotkeyCapture" Grid.Column="1"
+                        Content="修改" Padding="12,6" Margin="8,0,0,0"
+                        Background="{DynamicResource ControlFillStrong}" Foreground="{DynamicResource TextPrimary}"
+                        BorderThickness="0" Click="HotkeyCapture_Click"/>
+            </Grid>
+            <TextBlock x:Name="HotkeyHint" Text="点击“修改”后按下新组合键（含 Win/Ctrl/Alt/Shift）"
+                       Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,6,0,0"/>
+        </StackPanel>
+
+        <!-- 截图热键（2026-11-01 七次需求） -->
+        <StackPanel Grid.Row="2" Margin="0,0,0,14">
+            <TextBlock Text="截图提问热键" Foreground="{DynamicResource TextPrimary}" FontSize="13" Margin="0,0,0,6"/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Border Background="{DynamicResource ControlFillStrong}" CornerRadius="4" Padding="10,7" Grid.Column="0">
+                    <TextBlock x:Name="ShotHotkeyText" Text="Win+Alt+S"
+                               Foreground="{DynamicResource TextPrimary}" FontSize="13"/>
+                </Border>
+                <Button x:Name="ShotHotkeyCapture" Grid.Column="1"
+                        Content="修改" Padding="12,6" Margin="8,0,0,0"
+                        Background="{DynamicResource ControlFillStrong}" Foreground="{DynamicResource TextPrimary}"
+                        BorderThickness="0" Click="ShotHotkeyCapture_Click"/>
+                <Button x:Name="ShotHotkeyClear" Grid.Column="2"
+                        Content="禁用" Padding="12,6" Margin="6,0,0,0"
+                        Background="{DynamicResource ControlFillStrong}" Foreground="{DynamicResource TextPrimary}"
+                        BorderThickness="0"
+                        AutomationProperties.Name="ShotHotkeyClear"
+                        Click="ShotHotkeyClear_Click"/>
+            </Grid>
+            <TextBlock x:Name="ShotHotkeyHint"
+                       Text="全局按下即进入截图框选；“关闭”后只能用助手页工具栏的截图按钮"
+                       Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,6,0,0"
+                       TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <!-- 开机自启：2026-11-01（三次）用户要求移除——面板菜单里已有同名开关，
+             两处入口容易出现状态打架（改一处忘另一处就会"看起来没生效"），
+             统一交给菜单「开机自启」承担。配置项 StartWithWindows 保留，
+             菜单仍在写它（DrawerWindow.OpenAppMenu）；启动时的一致性修复也仍在
+             DrawerWindow.xaml.cs:194。 -->
+
+        <!-- 便签字号（2026-11-03 用户需求："在设置里增加一项便签内容字体调节设置"） -->
+        <StackPanel Grid.Row="3" Margin="0,0,0,14">
+            <TextBlock Text="便签正文字号" Foreground="{DynamicResource TextPrimary}" FontSize="13" Margin="0,0,0,6"/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Slider x:Name="NoteFontSlider" Grid.Column="0"
+                        Minimum="10" Maximum="20"
+                        IsSnapToTickEnabled="True" TickFrequency="1"
+                        AutomationProperties.Name="NoteFontSlider"
+                        ValueChanged="NoteFontSlider_ValueChanged"/>
+                <TextBlock x:Name="NoteFontText" Grid.Column="1"
+                           Text="12" Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                           VerticalAlignment="Center" Margin="10,0,0,0" Width="44"/>
+            </Grid>
+            <TextBlock x:Name="NoteFontHint"
+                       Text="只影响便签卡片的正文；卡片名称、时间等仍保持原样"
+                       Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <!-- 拉手 -->
+        <StackPanel Grid.Row="4" Margin="0,0,0,14">
+            <TextBlock Text="悬浮拉手高度" Foreground="{DynamicResource TextPrimary}" FontSize="13" Margin="0,0,0,6"/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Slider x:Name="HandleHeightSlider" Grid.Column="0"
+                        Minimum="40" Maximum="320"
+                        IsSnapToTickEnabled="True" TickFrequency="10"
+                        ValueChanged="HandleHeightSlider_ValueChanged"/>
+                <TextBlock x:Name="HandleHeightText" Grid.Column="1"
+                           Text="120" Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                           VerticalAlignment="Center" Margin="10,0,0,0" Width="44"/>
+            </Grid>
+        </StackPanel>
+
+        <!-- 自动收起延迟 -->
+        <StackPanel Grid.Row="5" Margin="0,0,0,0">
+            <TextBlock Text="鼠标离开后自动收起延迟" Foreground="{DynamicResource TextPrimary}" FontSize="13" Margin="0,0,0,6"/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Slider x:Name="CollapseDelaySlider" Grid.Column="0"
+                        Minimum="200" Maximum="2000"
+                        IsSnapToTickEnabled="True" TickFrequency="50"
+                        ValueChanged="CollapseDelaySlider_ValueChanged"/>
+                <TextBlock x:Name="CollapseDelayText" Grid.Column="1"
+                           Text="600" Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                           VerticalAlignment="Center" Margin="10,0,0,0" Width="54"/>
+            </Grid>
+        </StackPanel>
+
+        <!-- 助手页：字体随宽度缩放 -->
+        <StackPanel Grid.Row="6" Margin="0,14,0,0">
+            <CheckBox x:Name="ZoomScaleCheck" Content="助手页加宽时把小号站点补到 1.0"
+                      Foreground="{DynamicResource TextPrimary}" FontSize="13"
+                      Checked="ZoomScaleCheck_Changed" Unchecked="ZoomScaleCheck_Changed"/>
+            <TextBlock x:Name="ZoomScaleHint"
+                       Text="缩放上限固定 1.0。开启后加宽时只把偏小的站点（Kimi 0.9、智谱 0.55）补到 1.0 为止；DeepSeek / 千问本来就是 1.0，字号不变，只是显示更多内容"
+                       Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <!-- 预设提示词编辑器（2026-10-31 七次） -->
+        <GroupBox Grid.Row="7" Header="悬浮按钮预设提示词"
+                  Foreground="{DynamicResource TextPrimary}" FontSize="13"
+                  BorderBrush="{DynamicResource ControlFillStrong}" Padding="8" Margin="0,14,0,0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0"
+                           Text="选中文字后悬浮条上按顺序显示这些按钮；“发送”按钮在最左，可临时改一句。"
+                           Foreground="{DynamicResource TextMuted}" FontSize="11"
+                           TextWrapping="Wrap" Margin="0,0,0,6"/>
+
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="140"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- 左：条目列表 + 增删 -->
+                    <Grid Grid.Column="0" Margin="0,0,8,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <ListBox x:Name="PresetList" Grid.Row="0"
+                                 Background="{DynamicResource ControlFill}" BorderThickness="0"
+                                 Foreground="{DynamicResource TextPrimary}" FontSize="12"
+                                 AutomationProperties.Name="PresetList"
+                                 SelectionChanged="PresetList_SelectionChanged">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis"/>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,6,0,0">
+                            <Button x:Name="PresetAddButton" Content="新增"
+                                    Padding="10,4" MinWidth="44"
+                                    Background="{DynamicResource ControlFillStrong}" Foreground="{DynamicResource TextPrimary}"
+                                    BorderThickness="0"
+                                    AutomationProperties.Name="PresetAdd"
+                                    Click="PresetAdd_Click"/>
+                            <Button x:Name="PresetRemoveButton" Content="删除"
+                                    Padding="10,4" MinWidth="44" Margin="6,0,0,0"
+                                    Background="{DynamicResource ControlFillStrong}" Foreground="{DynamicResource TextPrimary}"
+                                    BorderThickness="0"
+                                    AutomationProperties.Name="PresetRemove"
+                                    Click="PresetRemove_Click"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- 右：选中项的标签与指令 -->
+                    <Grid Grid.Column="1">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Text="按钮文字"
+                                   Foreground="{DynamicResource TextSecondary}" FontSize="11" Margin="0,0,0,4"/>
+                        <TextBox x:Name="PresetLabelBox" Grid.Row="1"
+                                 Background="{DynamicResource ControlFillStrong}" Foreground="{DynamicResource TextPrimary}"
+                                 BorderThickness="0" Padding="6,4" FontSize="12"
+                                 AutomationProperties.Name="PresetLabel"
+                                 TextChanged="PresetLabelBox_TextChanged"/>
+
+                        <TextBlock Grid.Row="2" Text="提示词（点该按钮时发给助手）"
+                                   Foreground="{DynamicResource TextSecondary}" FontSize="11" Margin="0,8,0,4"/>
+                        <TextBox x:Name="PresetInstructionBox" Grid.Row="3"
+                                 Background="{DynamicResource ControlFillStrong}" Foreground="{DynamicResource TextPrimary}"
+                                 BorderThickness="0" Padding="6,4" FontSize="12"
+                                 TextWrapping="Wrap" AcceptsReturn="True"
+                                 VerticalScrollBarVisibility="Auto"
+                                 AutomationProperties.Name="PresetInstruction"
+                                 TextChanged="PresetInstructionBox_TextChanged"/>
+                    </Grid>
+                </Grid>
+            </Grid>
+        </GroupBox>
+
+        <!-- 底部状态 -->
+        <TextBlock x:Name="StatusText" Grid.Row="8"
+                   Text="改动即时生效并保存"
+                   Foreground="{DynamicResource TextMuted}" FontSize="11"
+                   HorizontalAlignment="Center"/>
+    </Grid>
+</Window>

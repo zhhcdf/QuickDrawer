@@ -1,0 +1,57 @@
+# Build output
+bin/
+obj/
+publish/
+out/
+
+# 历史源码快照（net10.0-windows 时代，仅作回溯参考，不进仓库）
+backup/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# NuGet
+*.nupkg
+packages/
+*.snupkg
+
+# Publish artifacts
+*.exe
+*.pdb
+*.zip
+*.msi
+
+# Local database / user data — 切勿提交（含个人剪贴板历史，见方案 §10.2）
+*.db
+*.db-shm
+*.db-wal
+localdata/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# ---- 开发期探针产物 ----
+# probe/ 下的脚本本身是 README 的卖点，要提交；
+# 但它们跑出来的截图 / dump / 一次性补丁数据含真实窗口内容与本机路径，不能提交。
+probe/**/out-*/
+probe/*.png
+probe/*.txt
+probe/*.json
+probe/*.ico
+probe/_b7test/
+probe/domspike/
+probe/webview-spike/
+probe/focus-test/
+probe/lnk-test/
+probe/mem-test/

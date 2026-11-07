@@ -1,0 +1,56 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- 浅色主题（跟随系统：AppsUseLightTheme=1 时启用） -->
+
+    <!-- 窗体与分区底色 -->
+    <SolidColorBrush x:Key="PanelBackground" Color="#F5F6F6F8"/>
+    <SolidColorBrush x:Key="PanelBorder" Color="#22000000"/>
+
+    <!--
+        对话框底色（2026-11-01）：设置页 / 自定义提示词编辑器这类普通窗口用。
+        PanelBackground 是 96% 不透明（#F5），主面板靠 AllowsTransparency 透出
+        桌面才达到观感；普通窗口没有透明层，半透明笔刷会被合成到黑底上而发暗。
+        这里给同一个颜色的全不透明版本，观感与主面板一致。
+    -->
+    <SolidColorBrush x:Key="DialogBackground" Color="#FFF6F6F8"/>
+
+    <!-- 控件底（按钮 hover 等） -->
+    <SolidColorBrush x:Key="ControlFill" Color="#18000000"/>
+    <SolidColorBrush x:Key="ControlFillStrong" Color="#26000000"/>
+
+    <!-- 强调文字（2026-11-01）：助手页激活站点用浅蓝字标记，不加底色。
+         浅色主题背景是 #F6F6F8，用较深的蓝保证对比度（与 #3A7BD5 同色系）。 -->
+    <!-- 2026-11-01：原 #2F7BD8 在 #F6F6F8 上只有 3.93:1，低于 WCAG AA 的 4.5。
+         同色相压暗到 #2565B5 = 5.39:1。ProviderChip 的选中态只靠这个颜色区分。 -->
+    <SolidColorBrush x:Key="AccentText" Color="#FF2565B5"/>
+
+    <!-- 危险/警示色（2026-11-01）：浅底上用更深的红，白字 5.6:1。 -->
+    <SolidColorBrush x:Key="Danger" Color="#FFC62828"/>
+
+    <!-- 选中态浅底（置顶/锁定按钮） -->
+    <SolidColorBrush x:Key="AccentSoft" Color="#262F7BD8"/>
+
+    <!-- 主按钮填充（统一品牌蓝）：白字 5.2:1。 -->
+    <SolidColorBrush x:Key="AccentFill" Color="#FF2F6BC0"/>
+
+    <!-- 文字 -->
+    <SolidColorBrush x:Key="TextPrimary" Color="#FF26262B"/>
+    <SolidColorBrush x:Key="TextSecondary" Color="#FF3D3D44"/>
+    <SolidColorBrush x:Key="TextMuted" Color="#FF707078"/>
+
+    <!-- 便签卡片色板（浅色底） -->
+    <SolidColorBrush x:Key="NoteYellow" Color="#F5E9C0"/>
+    <SolidColorBrush x:Key="NoteGreen" Color="#D3E8D3"/>
+    <SolidColorBrush x:Key="NoteBlue" Color="#D3DEEE"/>
+    <SolidColorBrush x:Key="NotePink" Color="#F2DCE2"/>
+    <SolidColorBrush x:Key="NoteGray" Color="#E6E6EA"/>
+
+    <!-- 便签卡片标题工具栏底色（2026-11-05 用户需求：比正文底色深一点）
+         同上，取对应卡片色按 0.88 压暗，浅色主题下也保持同色相。 -->
+    <SolidColorBrush x:Key="NoteYellowHeader" Color="#D8CDA9"/>
+    <SolidColorBrush x:Key="NoteGreenHeader" Color="#BACCBA"/>
+    <SolidColorBrush x:Key="NoteBlueHeader" Color="#BAC3D1"/>
+    <SolidColorBrush x:Key="NotePinkHeader" Color="#D5C2C7"/>
+    <SolidColorBrush x:Key="NoteGrayHeader" Color="#CACACE"/>
+</ResourceDictionary>
