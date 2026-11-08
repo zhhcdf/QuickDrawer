@@ -796,7 +796,13 @@
                                                      两者共用同一 Text 绑定，编辑态失焦即落盘并切回阅读态。
                                                      2026-11-05：外层卡片 Padding 归零后，正文留白改由这里的 Margin 提供
                                                      （左侧 6 与标题栏 Padding 的 6 对齐），否则文字会贴到卡片边缘。 -->
-                                                <Grid Margin="6,4,6,6">
+                                                <!-- 2026-11-08：双击判定必须挂在容器的 Preview（隧道）事件上，
+                                                     不能只挂 TextBlock 的 MouseLeftButtonDown（冒泡）。
+                                                     原因：第一下单击已经让 TextBlock 变 Collapsed、TextBox 变 Visible，
+                                                     第二下就落在 TextBox 上，TextBlock 的 handler 根本收不到 ClickCount==2，
+                                                     于是双击永远打不开编辑器（实测复现过）。 -->
+                                                <Grid Margin="6,4,6,6"
+                                                      PreviewMouseLeftButtonDown="NoteBodyArea_PreviewMouseDown">
                                                     <TextBlock x:Name="NoteBodyText"
                                                                Text="{Binding Text}"
                                                                Tag="NoteBodyDisplay"

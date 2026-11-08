@@ -635,6 +635,11 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool IsZoomed(IntPtr hWnd);
 
+    // 系统设定的双击间隔（毫秒）。WPF 的 MouseButtonEventArgs.ClickCount 就是按它累加的，
+    // 我们这里要在自己的手势判定里复用同一个阈值，免得和系统设置不一致。
+    [DllImport("user32.dll")]
+    public static extern uint GetDoubleClickTime();
+
     [DllImport("user32.dll")]
     public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
 

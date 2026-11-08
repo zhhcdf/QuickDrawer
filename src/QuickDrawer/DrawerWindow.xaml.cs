@@ -102,6 +102,10 @@ public partial class DrawerWindow : Window
     // 2026-11-08 用户需求：便签的独立编辑器（单实例，同一张卡重复点就激活已开的那个）。
     private NoteEditorWindow? _noteEditor;
 
+    // 本轮"就地编辑"是何时开始的（Environment.TickCount）。用来区分
+    // "单击进入编辑态后的第二下"（→ 打开独立编辑器）与"编辑态里双击选词"（→ 不该弹窗）。
+    private int _noteBodyEditStartedAt;
+
     // 决策 #5：自动收起的轮询计时器
     private System.Windows.Threading.DispatcherTimer? _autoHideTimer;
 
@@ -2893,22 +2897,6 @@ public partial class DrawerWindow : Window
             return;
         }
 
-        // 2026-11-08 用户需求：双击正文打开独立编辑器。
-        // 这里用 ClickCount 而不是自己实现双击间隔判定 —— WPF 的 ClickCount
-        // 已经按 SystemParameters.DoubleClickTime / DoubleClickWidth 判过了，
-        // 跟系统设置保持一致，不需要再抄一份逻辑。
-        // 单击仍然进就地编辑态（保持原有行为，卡片本身可编辑是用户明确要求的）。
-        if (e.ClickCount == 2)
-        {
-            if (FindAncestorCard(tb) is { } card)
-            {
-                OpenNoteEditor(card);
-            }
-
-            e.Handled = true;
-            return;
-        }
-
         TextBox? editor = panel.Children.OfType<TextBox>().FirstOrDefault();
         if (editor is null)
         {
@@ -2927,6 +2915,46 @@ public partial class DrawerWindow : Window
                 editor.CaretIndex = editor.Text.Length;
             }),
             System.Windows.Threading.DispatcherPriority.Input);
+    }
+
+    /* 2026-11-08：双击正文打开独立编辑器。
+       为什么挂在 Grid 的 Preview（隧道）而不是 TextBlock 的 MouseLeftButtonDown（冒泡）——
+       第一下单击就已经把 TextBlock 设成 Collapsed、把 TextBox 设成 Visible，
+       第二下自然落在 TextBox 上，TextBlock 的 handler 收不到 ClickCount==2，
+       双击永远打不开编辑器（这是 1.0.4 首发的真实缺陷，实测复现过）。
+       隧道事件从父级往下走，TextBox 抢不走。
+
+       但光这样做还不够：在已经处于就地编辑态的 TextBox 里双击选词也会累加成
+       ClickCount==2，那时不能弹编辑器，否则用户想选个词就被打断。
+       区分办法是看"这次就地编辑是不是刚刚由本轮的单击引起的"——
+       只有那种情况才把手势解释为"双击打开"。
+       双击选词时 TextBox 早就开着，_noteBodyEditStartedAt 是很久以前的值，
+       自然不满足下面的时间窗。 */
+    private void NoteBodyArea_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount != 2)
+        {
+            return;
+        }
+
+        // 本轮单击刚把阅读态切成编辑态？那这次双击的手势意图是"打开编辑器"。
+        int elapsed = Environment.TickCount - _noteBodyEditStartedAt;
+        if (_noteBodyEditStartedAt == 0 || elapsed < 0 || elapsed > (int)NativeMethods.GetDoubleClickTime())
+        {
+            return;
+        }
+
+        if (sender is FrameworkElement area && FindAncestorCard(area) is { } card)
+        {
+            // 先退回阅读态：否则编辑器关掉后卡片还停在就地编辑态，看着像没反应。
+            if (FindNoteBodyEditor(area) is { } editor)
+            {
+                SetNoteBodyEditing(editor, false);
+            }
+
+            OpenNoteEditor(card);
+            e.Handled = true;
+        }
     }
 
     private void NoteBodyEditor_LostFocus(object sender, RoutedEventArgs e)
@@ -3002,7 +3030,7 @@ public partial class DrawerWindow : Window
     }
 
     /// <summary>切换某张便签正文的编辑态，并同步同一 Grid 里阅读态 TextBlock 的可见性。</summary>
-    private static void SetNoteBodyEditing(TextBox editor, bool editing)
+    private void SetNoteBodyEditing(TextBox editor, bool editing)
     {
         editor.Visibility = editing ? Visibility.Visible : Visibility.Collapsed;
 
@@ -3021,6 +3049,10 @@ public partial class DrawerWindow : Window
         {
             editor.Focus();
             editor.CaretIndex = editor.Text.Length;
+
+            // 记下"这次就地编辑是什么时候开始的"，供 NoteBodyArea_PreviewMouseDown
+            // 判断紧随其后的第二下是不是同一个双击手势（见那边的注释）。
+            _noteBodyEditStartedAt = Environment.TickCount;
         }
     }
 
