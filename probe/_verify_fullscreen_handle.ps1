@@ -1,4 +1,4 @@
-# Gate probe for "hide the drawer handle while a fullscreen app is in front".
+﻿# Gate probe for "hide the drawer handle while a fullscreen app is in front".
 #
 # What it proves:
 #   1. the detection entry points exist on the SHIPPED assembly;
@@ -98,6 +98,31 @@ Check "foreground is not fullscreen" ($baseline -eq $false) ("reason=" + $args2[
 
 $d3d = $native.GetMethod('IsD3DFullscreen', $nvPublic).Invoke($null, @())
 Check "IsD3DFullscreen() callable" ($d3d -eq $false) ("returned=" + $d3d)
+
+# ---------------------------------------------------------------- section 2b
+# 2026-11-08 用户实测反馈补的回归项：切到纯桌面（没有前台应用窗口）时，
+# 前台会变成资源管理器铺壁纸的 WorkerW / Progman，它天生铺满整块 rcMonitor，
+# 几何判定必然命中 —— 结果拉手在桌面上被藏起来，而这时恰恰最需要它。
+# "显示桌面"用 Shell.Application.ToggleDesktop，切完必须再切回来。
+Write-Host "`n--- 2b. bare desktop: must NOT look fullscreen ---" -ForegroundColor Cyan
+try {
+    $shellApp = New-Object -ComObject Shell.Application
+    $shellApp.ToggleDesktop()
+    Start-Sleep -Milliseconds 1200
+
+    $args2b = [object[]]@([IntPtr]::Zero, '')
+    $deskVerdict = $probeMethod.Invoke($null, $args2b)
+    Check "bare desktop is not fullscreen" ($deskVerdict -eq $false) ("reason=" + $args2b[1])
+}
+catch {
+    Check "bare desktop is not fullscreen" $false ("could not toggle desktop: " + $_.Exception.Message)
+}
+finally {
+    if ($null -ne $shellApp) {
+        try { $shellApp.ToggleDesktop() } catch { }
+        Start-Sleep -Milliseconds 1200
+    }
+}
 
 # ---------------------------------------------------------------- section 3
 Write-Host "`n--- 3. real fullscreen window in another process: MUST look fullscreen ---" -ForegroundColor Cyan

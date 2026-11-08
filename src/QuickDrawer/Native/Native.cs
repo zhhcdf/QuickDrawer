@@ -638,6 +638,12 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
 
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetShellWindow();
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetDesktopWindow();
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
 
@@ -733,6 +739,35 @@ internal static class NativeMethods
     }
 
     /// <summary>
+    /// 是否是"桌面本身"那几层 shell 窗口（不是普通应用窗口）。
+    /// 桌面/壁纸窗口天然铺满整屏，必须从全屏判定里排除。
+    /// </summary>
+    public static bool IsShellDesktopWindow(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        // WorkerW / Progman：壁纸层。点桌面或"显示桌面"后前台会变成它们，
+        // 且有多层（顶层 Progman 下面挂 SHELLDLL_DefView，再下面还有 WorkerW）。
+        string cls = ClassNameOf(hwnd);
+        if (cls == "Progman" || cls == "WorkerW" || cls == "SHELLDLL_DefView"
+            || cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd")
+        {
+            return true;
+        }
+
+        // 兜底：桌面窗口 / shell 窗口本身
+        if (hwnd == GetDesktopWindow() || hwnd == GetShellWindow())
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// 前台窗口是否在**光标所在显示器**上铺满了整块屏（无边框全屏 / 全屏视频）。
     /// 命中时 <paramref name="hwnd"/> 返回该窗口，便于写诊断日志。
     /// </summary>
@@ -758,6 +793,17 @@ internal static class NativeMethods
         if (!IsWindowVisible(hwnd))
         {
             reason = "not visible";
+            return false;
+        }
+
+        // 2026-11-08 用户实测反馈：切到纯桌面（无任何窗口）时拉手被藏了。
+        // 原因是"显示桌面"之后前台窗口变成了资源管理器铺壁纸的那层
+        // （WorkerW / Progman），它天生就铺满整块屏 —— 几何判定必然命中，
+        // 但它显然不是"全屏应用"，用户这时恰恰需要拉手。
+        // 桌面/任务栏这几个 shell 窗口一律不算全屏。
+        if (IsShellDesktopWindow(hwnd))
+        {
+            reason = $"shell desktop ({ClassNameOf(hwnd)})";
             return false;
         }
 

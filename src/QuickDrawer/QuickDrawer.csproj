@@ -81,11 +81,11 @@
          error NETSDK1168: 启用剪裁时，不支持或不推荐使用 WPF）
     -->
 
-    <Version>1.0.2</Version>
+    <Version>1.0.3</Version>
     <!-- 显式写死四段版本号：只写 <Version> 时 SDK 会派生 1.0.0.0，
          但显式声明可以避免以后改 Version 时忘了同步资源管理器里显示的 FileVersion。 -->
-    <AssemblyVersion>1.0.2.0</AssemblyVersion>
-    <FileVersion>1.0.2.0</FileVersion>
+    <AssemblyVersion>1.0.3.0</AssemblyVersion>
+    <FileVersion>1.0.3.0</FileVersion>
     <Product>QuickDrawer</Product>
     <Description>Windows desktop side drawer: directory shortcuts, app shortcuts, sticky notes, clipboard history.</Description>
     <Company>QuickDrawer contributors</Company>
