@@ -247,8 +247,18 @@ public sealed class NotesViewModel
     public void TogglePin(NoteCardViewModel card)
     {
         card.Pinned = !card.Pinned;
+        Sort();
+        _save();
+    }
 
-        // 重排：置顶在前，组内按更新时间倒序
+    /// <summary>
+    /// 重排：置顶在前，组内按更新时间倒序。
+    /// 2026-11-08：从 TogglePin 里提出来变成公开方法 —— 独立编辑器关闭时
+    /// 会把 Model.UpdatedAt 刷新，卡片的应然位置也跟着变，那边需要同一套排序。
+    /// 用 Cards.Move 而不是重新赋 ItemsSource，否则 ListBox 会整体重建、丢滚动位置。
+    /// </summary>
+    public void Sort()
+    {
         var ordered = NoteStore.Sort(Cards.Select(c => c.Model).ToList());
         var orderedVms = ordered
             .Select(m => Cards.First(c => c.Id == m.Id))
@@ -260,8 +270,6 @@ public sealed class NotesViewModel
             Cards.Move(Cards.IndexOf(vm), index);
             index++;
         }
-
-        _save();
     }
 
     public void SetColor(NoteCardViewModel card, string color)

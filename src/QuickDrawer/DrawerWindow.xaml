@@ -689,6 +689,7 @@
                                                         <ColumnDefinition Width="Auto"/>
                                                         <ColumnDefinition Width="Auto"/>
                                                         <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
                                                     </Grid.ColumnDefinitions>
 
                                                     <!-- 卡片名称（最左）：空时显示占位提示 -->
@@ -761,8 +762,21 @@
                                                         </Button.Style>
                                                     </Button>
 
-                                                    <!-- 删除 -->
+                                                    <!-- 打开独立编辑器（2026-11-08 用户需求）。
+                                                         与正文双击是两个入口：双击不容易被发现，
+                                                         尤其卡片正文很短时用户根本不会想到去双击。 -->
                                                     <Button Grid.Column="3"
+                                                            Style="{StaticResource IconButton}"
+                                                            Content="✎" FontSize="11"
+                                                            Width="20" Height="18" Margin="0,0,2,0"
+                                                            Opacity="0.55"
+                                                            ToolTip="在独立窗口中编辑"
+                                                            AutomationProperties.Name="EditCard"
+                                                            Tag="{Binding}"
+                                                            Click="NoteEdit_Click"/>
+
+                                                    <!-- 删除 -->
+                                                    <Button Grid.Column="4"
                                                             Style="{StaticResource IconButton}"
                                                             Content="✕" FontSize="11"
                                                             Width="20" Height="18"

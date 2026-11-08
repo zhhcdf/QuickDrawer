@@ -1,0 +1,143 @@
+<Window x:Class="QuickDrawer.NoteEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="便签"
+        Width="680" Height="600"
+        MinWidth="380" MinHeight="260"
+        WindowStartupLocation="Manual"
+        ResizeMode="CanResize"
+        ShowInTaskbar="True"
+        Background="{DynamicResource DialogBackground}"
+        KeyDown="Window_KeyDown">
+
+    <!--
+        本窗口自己的按钮样式。
+
+        为什么不能直接用 IconButton：那个样式定义在 DrawerWindow.xaml 的
+        <Window.Resources> 里，是**窗口级局部资源**，别的窗口看不见。
+        StaticResource 是运行时解析的，XAML 编译期不检查 —— 编译能过，
+        但一打开编辑器就抛 XamlParseException（找不到资源）。
+        所以这里复制一份去掉固定宽高的版本，键名也换掉避免将来误解。
+    -->
+    <Window.Resources>
+        <Style x:Key="EditorToolButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="Padding" Value="8,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                CornerRadius="4" SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource ControlFill}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource ControlFillStrong}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <!--
+        便签的独立编辑器（2026-11-08 需求）。
+
+        为什么是纯文本而不是富文本：
+          用户明确要求"不要富文本元素，编辑器也是纯文本，保持卡片本身也能编辑"。
+          卡片正文是 NoteItem.Text（string），走 notes.json 的 v2 格式；一旦引入
+          RTF/HTML 存储，旧卡片迁移、搜索、预览全都要跟着改，而收益只是几个
+          格式标记。独立编辑器解决的真实痛点是"卡片正文的 MaxHeight 只有
+          150px，写长文时在一个小窗口里滚动"—— 那只需要更大的编辑面积。
+
+        为什么没有工具栏：纯文本没有格式可调。保留的三个按钮都是纯文本操作
+          （撤销 / 重做 / 插入时间），没有一个是富文本相关的。
+    -->
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- 工具行：左纯文本操作，右字数统计 -->
+        <Grid Grid.Row="0" Margin="0,0,0,8">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                <Button x:Name="UndoButton" Content="撤销"
+                        Style="{StaticResource EditorToolButton}"
+                        Width="Auto" MinWidth="48" Height="26" Padding="8,0"
+                        FontSize="12"
+                        ToolTip="撤销（Ctrl+Z）"
+                        AutomationProperties.Name="NoteUndo"
+                        Click="Undo_Click"/>
+                <Button x:Name="RedoButton" Content="重做"
+                        Style="{StaticResource EditorToolButton}"
+                        Width="Auto" MinWidth="48" Height="26" Padding="8,0"
+                        Margin="4,0,0,0"
+                        FontSize="12"
+                        ToolTip="重做（Ctrl+Y）"
+                        AutomationProperties.Name="NoteRedo"
+                        Click="Redo_Click"/>
+                <Button x:Name="InsertTimeButton" Content="插入时间"
+                        Style="{StaticResource EditorToolButton}"
+                        Width="Auto" MinWidth="64" Height="26" Padding="8,0"
+                        Margin="12,0,0,0"
+                        FontSize="12"
+                        ToolTip="在光标处插入当前日期时间"
+                        AutomationProperties.Name="NoteInsertTime"
+                        Click="InsertTime_Click"/>
+            </StackPanel>
+
+            <!-- 这里用 AutomationId 而不是 AutomationProperties.Name：
+                 TextBlock 的 UIA Name 默认就是它的文本内容，一旦用 Name 覆盖，
+                 无障碍读屏和自动化脚本都只能读到"NoteStat"，读不到"10 字 · 2 行"。 -->
+            <TextBlock x:Name="StatText" HorizontalAlignment="Right"
+                       VerticalAlignment="Center"
+                       Foreground="{DynamicResource TextMuted}" FontSize="11"
+                       Text="0 字 · 1 行"
+                       AutomationProperties.AutomationId="NoteStat"/>
+        </Grid>
+
+        <!-- 正文：多行纯文本。AcceptsTab 打开，方便粘贴/对齐缩进文本。 -->
+        <Border Grid.Row="1" Background="{DynamicResource ControlFillStrong}"
+                CornerRadius="4">
+            <TextBox x:Name="NoteBox"
+                     Background="Transparent" BorderThickness="0"
+                     Foreground="{DynamicResource TextPrimary}"
+                     FontSize="{DynamicResource NoteBodyFontSize}"
+                     Padding="10,8"
+                     AcceptsReturn="True" AcceptsTab="True"
+                     TextWrapping="Wrap"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Disabled"
+                     SpellCheck.IsEnabled="False"
+                     AutomationProperties.Name="NoteEditorText"
+                     TextChanged="NoteBox_TextChanged"/>
+        </Border>
+
+        <!-- 底行：保存说明 + 完成 -->
+        <Grid Grid.Row="2" Margin="0,8,0,0">
+            <TextBlock x:Name="HintText" HorizontalAlignment="Left" VerticalAlignment="Center"
+                       Foreground="{DynamicResource TextMuted}" FontSize="11"
+                       TextWrapping="Wrap"
+                       Text="关闭或点「完成」即保存到卡片（Esc 同样保存）。"
+                       AutomationProperties.Name="NoteEditorHint"/>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="完成" Width="84" Padding="0,7"
+                        Background="{DynamicResource AccentFill}" Foreground="White"
+                        BorderThickness="0"
+                        AutomationProperties.Name="NoteDone"
+                        Click="Done_Click"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

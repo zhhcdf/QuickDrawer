@@ -99,6 +99,9 @@ public partial class DrawerWindow : Window
     // M5：设置页（单实例，避免重复打开）
     private SettingsWindow? _settingsWindow;
 
+    // 2026-11-08 用户需求：便签的独立编辑器（单实例，同一张卡重复点就激活已开的那个）。
+    private NoteEditorWindow? _noteEditor;
+
     // 决策 #5：自动收起的轮询计时器
     private System.Windows.Threading.DispatcherTimer? _autoHideTimer;
 
@@ -284,6 +287,17 @@ public partial class DrawerWindow : Window
         // 2026-11-08：全屏轮询必须停掉。DispatcherTimer 会把窗口对象钉在
         // Dispatcher 上，不停就一直有回调往已经关掉的窗口里跑。
         StopFullscreenWatch();
+
+        // 2026-11-08：独立便签编辑器也是本进程的窗口，不关掉 ShutdownMode 就退不出去。
+        // Close() 会触发它自己的 OnClosed → 落盘，所以这里顺序上放在 SaveAll 之后没影响：
+        // 编辑器写回的是 ViewModel，SaveAll 已经跑过一遍，下面 SaveNotesToDisk 再补一次。
+        if (_noteEditor is not null)
+        {
+            _noteEditor.Close();
+            _noteEditor = null;
+            SaveNotesToDisk();
+        }
+
         // 被"遮挡区弹出"挪动过的窗口必须先还原，否则用户看到的布局会停在挪动后的状态
         _pushOut.End();
         NativeMethods.UnregisterGlobalHotkey(this, HotkeyIdToggle);
@@ -2879,6 +2893,22 @@ public partial class DrawerWindow : Window
             return;
         }
 
+        // 2026-11-08 用户需求：双击正文打开独立编辑器。
+        // 这里用 ClickCount 而不是自己实现双击间隔判定 —— WPF 的 ClickCount
+        // 已经按 SystemParameters.DoubleClickTime / DoubleClickWidth 判过了，
+        // 跟系统设置保持一致，不需要再抄一份逻辑。
+        // 单击仍然进就地编辑态（保持原有行为，卡片本身可编辑是用户明确要求的）。
+        if (e.ClickCount == 2)
+        {
+            if (FindAncestorCard(tb) is { } card)
+            {
+                OpenNoteEditor(card);
+            }
+
+            e.Handled = true;
+            return;
+        }
+
         TextBox? editor = panel.Children.OfType<TextBox>().FirstOrDefault();
         if (editor is null)
         {
@@ -2907,6 +2937,68 @@ public partial class DrawerWindow : Window
         }
 
         SaveNotesToDisk();
+    }
+
+    /* ==================== 便签独立编辑器（2026-11-08 用户需求） ====================
+       需求："给便签卡片增加一个双击区域（或者单击按钮）打开一个独立编辑器进行文字编辑，
+             关闭自动保存为便签的功能。"
+       用户澄清后定为纯文本编辑器（不做富文本），卡片本身仍可双击/单击就地编辑。
+
+       两个入口共用 OpenNoteEditor：
+         1. 双击正文（NoteBodyText_MouseDown 里 e.ClickCount == 2）
+         2. 标题栏的 ✎ 按钮（NoteEdit_Click）
+       单实例：已经为某张卡开着编辑器时，再点同一张卡就激活那个窗口，
+       而不是又开一个 —— 否则两个窗口同时编辑同一张卡，关掉后写的顺序决定内容。 */
+
+    private void NoteEdit_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: NoteCardViewModel card })
+        {
+            OpenNoteEditor(card);
+        }
+    }
+
+    private void OpenNoteEditor(NoteCardViewModel card)
+    {
+        // 已经开着：同一张卡就激活；不同卡就先把前一个关掉（关掉即保存），
+        // 避免遗留窗口中用户以为改的是新卡。
+        if (_noteEditor is not null)
+        {
+            if (ReferenceEquals(_noteEditor.Card, card))
+            {
+                if (_noteEditor.WindowState == WindowState.Minimized)
+                {
+                    _noteEditor.WindowState = WindowState.Normal;
+                }
+
+                _noteEditor.Activate();
+                return;
+            }
+
+            _noteEditor.Close();
+            _noteEditor = null;
+        }
+
+        // 面板本身是 Topmost + 自己管 Z-Order（见 Native.SetTopmost 的注释），
+        // 编辑器不设 Topmost：否则用户切到别的程序时它还压在人家上面。
+        NoteEditorWindow editor = new(card, this);
+        editor.NotesSaveRequested = SaveNotesToDisk;
+        editor.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_noteEditor, editor))
+            {
+                _noteEditor = null;
+            }
+
+            // 卡片正文变了，预览/排序都可能变（UpdatedAt 更新会导致置顶/时间排序变化）。
+            _notes.Sort();
+            UpdateNotesEmptyState();
+        };
+
+        _noteEditor = editor;
+        editor.Show();
+
+        DiagLog.Write("note", $"editor opened for card {card.Model.Id} ({card.Text.Length} chars)");
     }
 
     /// <summary>切换某张便签正文的编辑态，并同步同一 Grid 里阅读态 TextBlock 的可见性。</summary>
