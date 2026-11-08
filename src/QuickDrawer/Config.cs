@@ -158,6 +158,16 @@ public sealed class HandleConfig
     /// </summary>
     [JsonPropertyName("collapseDelayMs")]
     public int CollapseDelayMs { get; set; } = 600;
+
+    /// <summary>
+    /// 全屏应用（游戏 / 全屏视频）运行时隐藏拉手（2026-11-08 用户需求）：
+    /// "为了避免在全屏游戏等情况下误触拉手，影响游戏体验"。
+    ///
+    /// 默认开启。用户可以在托盘菜单里随时关掉 —— 万一检测误判或游戏假死
+    /// 卡在全屏状态，这是唯一的逃生门（拉手已经被藏起来了，点不到它）。
+    /// </summary>
+    [JsonPropertyName("hideInFullscreen")]
+    public bool HideInFullscreen { get; set; } = true;
 }
 
 public sealed class HotkeyConfig

@@ -421,7 +421,7 @@ internal static class NativeMethods
             return SystemParametersWorkArea();
         }
 
-        IntPtr hmon = MonitorFromPoint(p.X, p.Y, MONITOR_DEFAULTTONEAREST);
+        IntPtr hmon = MonitorFromPoint(p, MONITOR_DEFAULTTONEAREST);
         if (hmon == IntPtr.Zero)
         {
             return SystemParametersWorkArea();
@@ -463,8 +463,15 @@ internal static class NativeMethods
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
 
+    // 注意：Win32 原型是 MonitorFromPoint(POINT pt, DWORD dwFlags)，POINT 是 8 字节
+    // 结构体按值传递。早期这里误写成 (int x, int y, uint dwFlags)，在 x86 上堆栈
+    // 布局恰好等价所以看不出问题；本项目 PlatformTarget=x64，x64 下 POINT 只占
+    // 一个寄存器，拆成两个 int 参数会让 dwFlags 错位到第三个参数槽，user32 看到
+    // 的是垃圾 flags → 直接返回 NULL。表现就是 GetWorkAreaForCursor() 永远走进
+    // SystemParametersWorkArea() 兜底（主屏工作区，且是 DIP 坐标），
+    // 于是光标在副屏时拉手/面板仍贴到主屏 —— 2026-11-08 做全屏检测时被探针抓出来。
     [DllImport("user32.dll")]
-    private static extern IntPtr MonitorFromPoint(int x, int y, uint dwFlags);
+    private static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT
@@ -681,4 +688,150 @@ internal static class NativeMethods
         int n = GetClassName(hwnd, sb, sb.Capacity);
         return n > 0 ? sb.ToString(0, n) : "?";
     }
+
+    /* ==================== 全屏检测（2026-11-08 用户需求） ==================== */
+    //
+    // 需求："为了避免在全屏游戏等情况下误触拉手，影响游戏体验，
+    //       我想在全屏游戏时能临时关闭拉手热区，全屏视频也隐藏。"
+    //
+    // 用两个互补信号，缺一不可：
+    //   ① 几何：前台窗口矩形铺满它所在显示器的 **rcMonitor**（不是工作区）；
+    //   ② 系统状态：SHQueryUserNotificationState 报 QUNS_RUNNING_D3D_FULL_SCREEN。
+    //
+    // 为什么几何要配 rcMonitor 而不是 rcWork：rcWork 是扣掉任务栏后的区域，
+    // 普通最大化窗口正好铺满 rcWork —— 拿 rcWork 比会把所有最大化窗口误判成全屏。
+    // WindowPushOut.cs:206-212 拿 work 比是因为它还要配 !IsZoomed 反筛，
+    // 这里直接比 rcMonitor 更省一层判断（无边框全屏与最大化的真正分野就在任务栏那一条）。
+    // 两处判定目标不同，各按各的需要取基准，没有"谁抄谁"的问题。
+
+    /// <summary>
+    /// 取指定显示器的**完整矩形**（含任务栏区域）。全屏判定的基准。
+    /// </summary>
+    public static bool TryGetMonitorRect(IntPtr hMonitor, out Rect monitor)
+    {
+        monitor = default;
+        if (hMonitor == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        MONITORINFO mi = new() { cbSize = Marshal.SizeOf<MONITORINFO>() };
+        if (!GetMonitorInfo(hMonitor, ref mi))
+        {
+            return false;
+        }
+
+        monitor = new Rect(mi.rcMonitor.Left, mi.rcMonitor.Top,
+            mi.rcMonitor.Right - mi.rcMonitor.Left, mi.rcMonitor.Bottom - mi.rcMonitor.Top);
+        return true;
+    }
+
+    /// <summary>光标所在显示器句柄（拉手贴在光标那块屏上，判定也必须按那块屏）。</summary>
+    public static IntPtr GetMonitorForCursor()
+    {
+        return GetCursorPos(out POINT p) ? MonitorFromPoint(p, MONITOR_DEFAULTTONEAREST) : IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// 前台窗口是否在**光标所在显示器**上铺满了整块屏（无边框全屏 / 全屏视频）。
+    /// 命中时 <paramref name="hwnd"/> 返回该窗口，便于写诊断日志。
+    /// </summary>
+    public static bool IsForegroundFullscreenOnCursorMonitor(out IntPtr hwnd, out string reason)
+    {
+        hwnd = GetForegroundWindow();
+        reason = "";
+
+        if (hwnd == IntPtr.Zero)
+        {
+            reason = "no foreground";
+            return false;
+        }
+
+        // 自己的窗口（面板 / 拉手）绝不能算全屏，否则拉手会把自己藏起来
+        GetWindowThreadProcessId(hwnd, out uint pid);
+        if (pid == (uint)System.Diagnostics.Process.GetCurrentProcess().Id)
+        {
+            reason = "own process";
+            return false;
+        }
+
+        if (!IsWindowVisible(hwnd))
+        {
+            reason = "not visible";
+            return false;
+        }
+
+        // UWP 应用会留下"被隐藏但仍在 Z 序里"的幽灵窗口，几何上看着铺满屏
+        try
+        {
+            if (DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0 && cloaked != 0)
+            {
+                reason = "cloaked";
+                return false;
+            }
+        }
+        catch (DllNotFoundException)
+        {
+            // 老系统没有 dwmapi：跳过这一层，交给几何判定
+        }
+        catch (EntryPointNotFoundException)
+        {
+        }
+
+        IntPtr hmon = GetMonitorForCursor();
+        if (!TryGetMonitorRect(hmon, out Rect monitor))
+        {
+            reason = "no monitor rect";
+            return false;
+        }
+
+        if (!GetWindowRect(hwnd, out RECT r))
+        {
+            reason = "no window rect";
+            return false;
+        }
+
+        // 容差 2px：DPI 缩放下 rect 与 monitor 常差 1~2 像素
+        bool fills = Math.Abs(r.Left - monitor.Left) <= 2
+                     && Math.Abs(r.Top - monitor.Top) <= 2
+                     && Math.Abs(r.Right - monitor.Right) <= 2
+                     && Math.Abs(r.Bottom - monitor.Bottom) <= 2;
+
+        if (!fills)
+        {
+            reason = $"rect {r.Left},{r.Top}-{r.Right},{r.Bottom} vs monitor {monitor.Left},{monitor.Top}-{monitor.Right},{monitor.Bottom}";
+            return false;
+        }
+
+        reason = $"fills {r.Left},{r.Top}-{r.Right},{r.Bottom}";
+        return true;
+    }
+
+    /// <summary>
+    /// 系统是否正处于 D3D 独占全屏（QUNS_RUNNING_D3D_FULL_SCREEN = 3）。
+    /// 这类窗口的矩形可能不是整屏（由显示驱动全屏翻转接管），几何判定会漏。
+    /// </summary>
+    public static bool IsD3DFullscreen()
+    {
+        try
+        {
+            int hr = SHQueryUserNotificationState(out int state);
+            // S_OK = 0；失败时返回 HRESULT，此时按"不是全屏"处理（保守，不误藏拉手）
+            return hr == 0 && state == QUNS_RUNNING_D3D_FULL_SCREEN;
+        }
+        catch (DllNotFoundException)
+        {
+            return false;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>QUNS_RUNNING_D3D_FULL_SCREEN（独占全屏运行中）。</summary>
+    public const int QUNS_RUNNING_D3D_FULL_SCREEN = 3;
+
+    [DllImport("shell32.dll")]
+    private static extern int SHQueryUserNotificationState(out int pquns);
 }

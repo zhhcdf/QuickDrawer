@@ -85,6 +85,11 @@ public partial class DrawerWindow : Window
     // 抽屉拉手（决策 #5）
     private HandleWindow? _handle;
 
+    // 2026-11-08 用户需求：全屏游戏 / 全屏视频时隐藏拉手，退出全屏自动恢复。
+    private System.Windows.Threading.DispatcherTimer? _fullscreenTimer;
+    private bool _handleSuppressedByFullscreen;
+    private bool _handleVisible;
+
     // M4：便签卡片集合
     private NotesViewModel _notes = null!;
 
@@ -227,6 +232,13 @@ public partial class DrawerWindow : Window
             _handle.ClickRequested += () => Dispatcher.Invoke(ShowAnimated);
             _handle.HoverRequested += () => Dispatcher.Invoke(ShowAnimated);
             _handle.Show();
+
+            // 2026-11-08：ShowAnimated() 在上面已经跑过（那会儿 _handle 还是 null），
+            // 所以这里先按"已显示"记账，再让统一判定点决定它到底该不该露出来
+            // —— 面板正开着就不该露，全屏中也不该露。
+            _handleVisible = true;
+            StartFullscreenWatch();
+            UpdateHandleVisibility();
         }
 
         // M5：系统托盘图标
@@ -268,6 +280,10 @@ public partial class DrawerWindow : Window
         SaveAll();
 
         StopDashboard();
+
+        // 2026-11-08：全屏轮询必须停掉。DispatcherTimer 会把窗口对象钉在
+        // Dispatcher 上，不停就一直有回调往已经关掉的窗口里跑。
+        StopFullscreenWatch();
         // 被"遮挡区弹出"挪动过的窗口必须先还原，否则用户看到的布局会停在挪动后的状态
         _pushOut.End();
         NativeMethods.UnregisterGlobalHotkey(this, HotkeyIdToggle);
@@ -400,8 +416,10 @@ public partial class DrawerWindow : Window
 
         _isOpen = true;
 
-        // 面板展开时隐藏拉手，避免和面板重叠
-        _handle?.HideForPanel();
+        // 面板展开时隐藏拉手，避免和面板重叠。
+        // 2026-11-08：改走统一判定点，不要再直接调 HideForPanel —— 否则
+        // _handleVisible 会和真实可见性脱节，全屏恢复时判断会错。
+        UpdateHandleVisibility();
 
         // 决策 #5：启动自动收起监测（鼠标离开面板 800ms 后收起）
         StartAutoHideWatch();
@@ -450,8 +468,9 @@ public partial class DrawerWindow : Window
             base.Hide();
             _isOpen = false;
 
-            // 面板收起后显示拉手
-            _handle?.ShowForPanel();
+            // 面板收起后显示拉手 —— 但全屏抑制期间不能弹出来，
+            // 所以同样走统一判定点（2026-11-08）。
+            UpdateHandleVisibility();
 
             // 2026-11-03：没人看着时不该继续每秒采样（省电、也免得 WMI 线程白跑）
             StopDashboard();
@@ -1366,6 +1385,123 @@ public partial class DrawerWindow : Window
         _autoHideTimer?.Stop();
     }
 
+    /* ==================== 全屏时隐藏拉手（2026-11-08 用户需求） ==================== */
+    //
+    // 需求原文："为了避免在全屏游戏等情况下误触拉手，影响游戏体验。
+    //           我想在全屏游戏时能临时关闭拉手热区。"
+    // 追加确认：全屏视频也隐藏；托盘菜单只给"开/关"开关，不做"暂停 N 分钟"。
+    //
+    // 恢复机制（用户专门问过"退出全屏后如何激活拉手"）：
+    //   **由状态翻转驱动，不需要用户做任何事。**
+    //   500ms 轮询发现"不再是全屏"→ 同一个 UpdateHandleVisibility() 就会把拉手显示回来。
+    //   关键不是"进入全屏时隐藏"，而是"任何时刻只有一个地方决定拉手该不该显示"，
+    //   否则 HideAnimated 里那句无条件 ShowForPanel 会在全屏中把拉手又弹回来。
+
+    /// <summary>启动全屏监测（只在启用了拉手时才有意义）。</summary>
+    private void StartFullscreenWatch()
+    {
+        if (_handle is null)
+        {
+            return;
+        }
+
+        _fullscreenTimer ??= new System.Windows.Threading.DispatcherTimer
+        {
+            // 500ms：比自动收起的 120ms 慢得多，因为这里只是"场景切换"，
+            // 半秒延迟人眼几乎无感；三个廉价系统调用也不值得更密。
+            Interval = TimeSpan.FromMilliseconds(500)
+        };
+
+        _fullscreenTimer.Stop();
+        _fullscreenTimer.Tick -= FullscreenTimer_Tick;
+        _fullscreenTimer.Tick += FullscreenTimer_Tick;
+        _fullscreenTimer.Start();
+
+        DiagLog.Write("handle", $"fullscreen watch started (hideInFullscreen={_config.Dock.Handle.HideInFullscreen})");
+    }
+
+    private void StopFullscreenWatch()
+    {
+        _fullscreenTimer?.Stop();
+    }
+
+    private void FullscreenTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_handle is null)
+        {
+            return;
+        }
+
+        bool fullscreen = false;
+        IntPtr culprit = IntPtr.Zero;
+        string reason = "";
+
+        if (_config.Dock.Handle.HideInFullscreen)
+        {
+            // 几何判定：前台窗口是否在光标所在显示器上铺满整块屏
+            fullscreen = NativeMethods.IsForegroundFullscreenOnCursorMonitor(out culprit, out reason);
+
+            // 独占全屏（D3D）可能不走普通窗口几何，补一条系统状态判定
+            if (!fullscreen && NativeMethods.IsD3DFullscreen())
+            {
+                fullscreen = true;
+                reason = "QUNS_RUNNING_D3D_FULL_SCREEN";
+            }
+        }
+
+        // 只在状态翻转时动作 + 写日志，避免每 500ms 刷一行
+        if (fullscreen != _handleSuppressedByFullscreen)
+        {
+            _handleSuppressedByFullscreen = fullscreen;
+
+            if (fullscreen)
+            {
+                DiagLog.Write("handle",
+                    $"hidden: fullscreen detected hwnd=0x{culprit:X} class={NativeMethods.ClassNameOf(culprit)} {reason}");
+            }
+            else
+            {
+                DiagLog.Write("handle", "restored: no longer fullscreen");
+            }
+
+            UpdateHandleVisibility();
+        }
+    }
+
+    /// <summary>
+    /// 拉手可见性的**唯一**判定点。
+    /// 现在有三条路径会改变它（面板展开/收起、全屏状态翻转、托盘开关切换），
+    /// 如果各自直接调 Show/Hide，就会出现"全屏中点一下面板再收起，拉手又冒出来"的问题。
+    ///
+    /// 显示条件必须同时满足：拉手存在 && 面板当前收起 && 不在全屏抑制中。
+    /// </summary>
+    private void UpdateHandleVisibility()
+    {
+        if (_handle is null)
+        {
+            return;
+        }
+
+        // 面板展开时一律藏（面板本身占着屏幕右缘，拉手会重叠）
+        bool shouldShow = !_isOpen && !_handleSuppressedByFullscreen;
+
+        if (shouldShow == _handleVisible)
+        {
+            return;
+        }
+
+        _handleVisible = shouldShow;
+
+        if (shouldShow)
+        {
+            _handle.ShowForPanel();
+        }
+        else
+        {
+            _handle.HideForPanel();
+        }
+    }
+
     /// <summary>
     /// 面板被用户固定（2026-10-25 需求 1）时启动的"伪轮询"：
     /// 仍然跑 120ms 计时器，但 Tick 里命中 <see cref="_panelPinned"/> 就直接返回，
@@ -1392,8 +1528,7 @@ public partial class DrawerWindow : Window
     /// 顶部栏"固定面板"按钮（2026-10-25 需求 1）：
     /// 激活后鼠标离开面板也不自动收起；状态写进 config.Dock.PinPanel，重启保持。
     /// </summary>
-    private void PinPanelButton_Click(object sender, RoutedEventArgs e)
-    {
+    private void PinPanelButton_Click(object sender, RoutedEventArgs e)    {
         _panelPinned = !_panelPinned;
         _config.Dock.PinPanel = _panelPinned;
         UpdatePinPanelVisual();
@@ -3470,6 +3605,35 @@ public partial class DrawerWindow : Window
         var settings = new MenuItem { Header = "设置…" };
         settings.Click += (_, _) => OpenSettings();
 
+        // 2026-11-08 用户需求：全屏游戏/全屏视频时临时关掉拉手热区。
+        // 为什么放在托盘而不是设置页：这是个"当场要关"的动作，进了全屏游戏就点不到设置；
+        // 而且它同时是检测失效时的唯一逃生门（拉手已被藏，没法从拉手上唤起面板）。
+        var hideFullscreen = new MenuItem
+        {
+            Header = "全屏时隐藏拉手",
+            IsCheckable = true,
+            IsChecked = _config.Dock.Handle.HideInFullscreen,
+            IsEnabled = _handle is not null
+        };
+        hideFullscreen.Click += (_, _) =>
+        {
+            bool target = !_config.Dock.Handle.HideInFullscreen;
+            _config.Dock.Handle.HideInFullscreen = target;
+            ConfigStore.Save(_config);
+            hideFullscreen.IsChecked = target;
+
+            // 不等下一个 500ms tick：用户刚点完，拉手应该立刻回来/消失。
+            // 注意关掉开关时必须把抑制标志清零，否则 _handleSuppressedByFullscreen
+            // 还停在 true，UpdateHandleVisibility 一样不会显示。
+            if (!target)
+            {
+                _handleSuppressedByFullscreen = false;
+            }
+
+            DiagLog.Write("handle", $"tray toggle: hideInFullscreen={target}");
+            UpdateHandleVisibility();
+        };
+
         var autoStart = new MenuItem
         {
             Header = "开机自启",
@@ -3496,6 +3660,7 @@ public partial class DrawerWindow : Window
         exit.Click += (_, _) => Application.Current.Shutdown();
 
         menu.Items.Add(settings);
+        menu.Items.Add(hideFullscreen);
         menu.Items.Add(autoStart);
         menu.Items.Add(about);
         menu.Items.Add(new Separator());
