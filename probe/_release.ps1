@@ -206,7 +206,14 @@ function Assert-Preconditions {
     Assert-Gh
 
     # 该版本是否已经发过
-    & $GhExe api "repos/$Repo/releases/tags/v$Version" 2>&1 | Out-Null
+    # 注意：这个探存在性请求对"还没发布的新版本"必然是 404，而 Windows PowerShell 5.1 里
+    # 原生命令的 2>&1 会把 stderr 变成 ErrorRecord，配合本脚本的 $ErrorActionPreference='Stop'
+    # 直接抛 NativeCommandError —— 结果就是每次发布新版本都在这一步崩掉，而不是继续往下走。
+    # 2026-11-08 发 1.0.3 时实测复现。只能临时把 EAP 降到 Continue，只看退出码。
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $GhExe api "repos/$Repo/releases/tags/v$Version" 2>&1 | Out-Null }
+    finally { $ErrorActionPreference = $eap }
     if ($LASTEXITCODE -eq 0) { Die "Release v$Version 已存在，不能重复发布。要重发请先删掉旧 Release 和 tag。" }
     $tags = & git -C $Root tag --list "v$Version"
     if ($tags) { Die "本地已有 tag v$Version" }
@@ -399,7 +406,16 @@ function Invoke-GitCommitPush {
     Ok '已提交'
 
     if ($NoPush) { Warn '（-NoPush：不推送）'; return }
-    & git -C $Root -c core.quotepath=false push origin main 2>&1 | ForEach-Object { Info $_ }
+
+    # 凭据：这台机器上没有任何 credential.helper（`git config --get-all credential.helper` 为空，
+    # 也没有 %USERPROFILE%\.git-credentials），所以 git push 会停在
+    #   fatal: could not read Username for 'https://github.com': No such file or directory
+    # 上。gh 已经登录过，直接用它的凭据助手，不要指望系统凭据管理器。
+    # 路径要换成 / —— git 的 ! 助手是当 shell 命令跑的，反斜杠会被当转义。
+    $ghForGit = $GhExe -replace '\\', '/'
+    $authArgs = @('-c', "credential.helper=!$ghForGit auth git-credential")
+
+    & git -C $Root -c core.quotepath=false @authArgs push origin main 2>&1 | ForEach-Object { Info $_ }
     Assert-LastExit 'git push'
     Ok '已推送'
 
