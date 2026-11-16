@@ -54,4 +54,11 @@ probe/domspike/
 probe/webview-spike/
 probe/focus-test/
 probe/lnk-test/
+
+# ---- 第三方崩溃上报目录（不属于本项目） ----
+# 代理工具 karing（com.nebula.karing）内嵌的 sentry-native 崩溃处理器，
+# 会往"当前工作目录"写 .sentry-native/：installation_id、settings.dat、
+# __sentry-event 等。它跟 QuickDrawer 没有任何关系，绝不能提交。
+# 2026-11-16 实测：该目录在仓库根出现，git add -A 会把它一并带上。
+.sentry-native/
 probe/mem-test/
