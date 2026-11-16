@@ -337,4 +337,38 @@ public static class ShortcutStore
 
         return new ShortcutItem { Kind = "file", Name = Path.GetFileName(path), Target = path };
     }
+
+    /// <summary>
+    /// 这个条目能不能"以管理员身份打开"（ShellExecute 的 runas 动词）。
+    ///
+    /// 判据是 Kind + 扩展名 + 文件真实存在，三者都要满足：
+    ///
+    /// · <b>Kind 必须是 app</b>：目录对 runas 没有意义（Explorer 会忽略提权直接打开），
+    ///   文档类文件走文件关联启动别人的宿主程序，用户想要的是"用编辑器打开"而不是
+    ///   "把记事本提权"，提权了也打不开受保护位置。
+    ///
+    /// · <b>扩展名限 .exe / .com</b>：这不是随手写的白名单，而是恰好等于"能进应用区"
+    ///   的集合 —— <see cref="Classify"/> 只把 .exe/.com（以及解析到它们的 .lnk）判成
+    ///   kind=app，浏览对话框的过滤器也只有 *.exe / *.lnk。所以 .bat/.cmd/.msi 本来就
+    ///   进不了应用区，把它们写进白名单是死代码。
+    ///
+    /// · <b>File.Exists</b>：路径失效的磁贴（盘符变了、程序卸载了）点了必然失败，
+    ///   让菜单项灰着，比让用户点出一句 ShellExecute 错误码更有用。
+    /// </summary>
+    public static bool CanRunElevated(ShortcutItem item)
+    {
+        if (item.Kind != "app")
+        {
+            return false;
+        }
+
+        string target = item.Target;
+        if (string.IsNullOrWhiteSpace(target) || !File.Exists(target))
+        {
+            return false;
+        }
+
+        string ext = Path.GetExtension(target).ToLowerInvariant();
+        return ext is ".exe" or ".com";
+    }
 }

@@ -1785,6 +1785,18 @@ public partial class DrawerWindow : Window
 
         var menu = new ContextMenu();
 
+        // 2026-11-16 用户需求：以管理员身份打开。
+        // 单独放在第一组，因为它换的是"用哪种权限启动"，与下面三项（定位 / 改名 / 删除）
+        // 不是同一类操作；混在删除旁边容易被误点。
+        // 当前进程已提权时文案要说清楚 —— 那种情况下点它不会再弹 UAC，
+        // 不说明的话用户会以为功能没生效。
+        var runAsAdmin = new MenuItem
+        {
+            Header = NativeMethods.IsProcessElevated() ? "以管理员身份打开（当前已是管理员）" : "以管理员身份打开",
+            IsEnabled = ShortcutStore.CanRunElevated(vm.Model)
+        };
+        runAsAdmin.Click += (_, _) => LaunchTarget(vm.Model, elevated: true);
+
         var openFolder = new MenuItem { Header = "打开所在位置" };
         openFolder.Click += (_, _) => RevealInExplorer(vm.Model.Target);
 
@@ -1807,6 +1819,8 @@ public partial class DrawerWindow : Window
             DiagLog.Write("app-remove", $"removed {vm.Name}");
         };
 
+        menu.Items.Add(runAsAdmin);
+        menu.Items.Add(new Separator());
         menu.Items.Add(openFolder);
         menu.Items.Add(rename);
         menu.Items.Add(new Separator());
@@ -3880,6 +3894,22 @@ public partial class DrawerWindow : Window
 
     private static void LaunchTarget(ShortcutItem item)
     {
+        LaunchTarget(item, elevated: false);
+    }
+
+    /// <summary>
+    /// 启动一个快捷方式项。
+    ///
+    /// <paramref name="elevated"/> 为 true 时走 ShellExecute 的 runas 动词（UAC 提权）。
+    ///
+    /// 为什么用 ShellExecute 而不是 Process.Start + Verb="runas"：
+    /// 前者成功时返回值 &gt; 32、失败时返回错误码本身，失败也不会抛异常，
+    /// 调用处一眼能分辨；后者两种情况都抛 Win32Exception，要读 NativeErrorCode 才能分开。
+    /// 还有个现实原因 —— 这个方法原本就用 ShellExecute，"普通打开"那条路径不该因为
+    /// 新增提权入口而改变行为。
+    /// </summary>
+    private static void LaunchTarget(ShortcutItem item, bool elevated)
+    {
         try
         {
             if (!File.Exists(item.Target) && !Directory.Exists(item.Target))
@@ -3889,14 +3919,26 @@ public partial class DrawerWindow : Window
                 return;
             }
 
+            string verb = elevated ? NativeMethods.VERB_RUNAS : "open";
+
             // ShellExecute 让系统按文件类型决定行为：exe 启动、目录用资源管理器打开
-            IntPtr r = NativeMethods.ShellExecute(IntPtr.Zero, "open", item.Target,
+            IntPtr r = NativeMethods.ShellExecute(IntPtr.Zero, verb, item.Target,
                 item.Args ?? string.Empty, string.Empty, NativeMethods.SW_SHOWNORMAL);
 
             // ShellExecute 返回值 > 32 表示成功
-            if ((long)r <= 32)
+            if ((long)r <= NativeMethods.ShellExecuteSuccessThreshold)
             {
-                DiagLog.Write("launch", $"ShellExecute failed for {item.Target}, ret={r}");
+                int code = (int)r;
+
+                // 用户在 UAC 对话框里点了"否"。这是一次正常的用户选择，不是故障：
+                // 弹错误框只会让每次取消提权都被提示一遍。记日志、安静返回。
+                if (elevated && (code == NativeMethods.ERROR_ACCESS_DENIED || code == NativeMethods.ERROR_CANCELLED))
+                {
+                    DiagLog.Write("launch", $"elevated launch cancelled by user: {item.Target} (ret={code})");
+                    return;
+                }
+
+                DiagLog.Write("launch", $"ShellExecute({verb}) failed for {item.Target}, ret={r}");
                 MessageBox.Show($"打开失败：\n{item.Target}", "QuickDrawer",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
@@ -3904,7 +3946,7 @@ public partial class DrawerWindow : Window
 
             item.UseCount++;
             item.LastUsedAt = DateTime.UtcNow.ToString("o");
-            DiagLog.Write("launch", $"ok: {item.Name} ({item.Target})");
+            DiagLog.Write("launch", $"ok{(elevated ? " (elevated)" : string.Empty)}: {item.Name} ({item.Target})");
         }
         catch (Exception ex)
         {

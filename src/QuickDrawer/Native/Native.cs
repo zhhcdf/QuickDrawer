@@ -265,6 +265,83 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern UIntPtr GlobalSize(IntPtr hMem);
 
+    // ---- 令牌查询（判断当前进程是否已提权） ----
+    /// <summary>
+    /// 取当前进程的主令牌。
+    /// 返回的句柄用完必须 <see cref="CloseHandle"/>，否则每次调用漏一个内核句柄。
+    /// </summary>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetCurrentProcess();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CloseHandle(IntPtr hObject);
+
+    /// <summary>TOKEN_QUERY = 0x0008，OpenProcessToken 需要的最小权限。</summary>
+    public const uint TOKEN_QUERY = 0x0008;
+
+    /// <summary>
+    /// TokenElevation 的信息类编号（TOKEN_INFORMATION_CLASS），值是 20。
+    ///
+    /// 这个类返回一个 DWORD：非 0 表示令牌已提权。
+    /// **不能用"是否属于 Administrators 组"代替** —— UAC 开启时，未提权进程的令牌里
+    /// Administrators 组的 SID 是 deny-only 的，组成员判断会给出与真实提权状态无关的结果。
+    ///
+    /// 也刻意不用 TokenElevationType(18) 再比 TokenElevationTypeFull(2)：
+    /// 那个类在 UAC 关闭的系统上语义会退化，直接问"是否提权"更准。
+    /// </summary>
+    public const int TokenElevation = 20;
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern bool GetTokenInformation(IntPtr tokenHandle, int tokenInformationClass,
+        out int tokenInformation, int tokenInformationLength, out int returnLength);
+
+    /// <summary>
+    /// 当前进程是否以管理员身份运行（已提权）。
+    ///
+    /// 为什么需要这个：应用区右键的"以管理员身份打开"在**已经**提权的 QuickDrawer 里
+    /// 点下去不会弹 UAC（子进程直接继承提权令牌），用户会以为没生效。菜单文案要据此
+    /// 改成"已管理员"之类的说明，而不是让点了没反应。
+    ///
+    /// 任何一步失败都返回 false（保守假设"没提权"）：宁可多弹一次 UAC，
+    /// 也不要因为查询失败而漏掉提权。
+    /// </summary>
+    public static bool IsProcessElevated()
+    {
+        IntPtr token = IntPtr.Zero;
+        try
+        {
+            if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, out token))
+            {
+                return false;
+            }
+
+            if (!GetTokenInformation(token, TokenElevation, out int elevated, sizeof(int), out _))
+            {
+                return false;
+            }
+
+            return elevated != 0;
+        }
+        catch (DllNotFoundException)
+        {
+            return false;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            return false;
+        }
+        finally
+        {
+            if (token != IntPtr.Zero)
+            {
+                CloseHandle(token);
+            }
+        }
+    }
+
     // ---- CF_BITMAP -> DIB 转换（截图工具只提供 CF_BITMAP 时用） ----
     [StructLayout(LayoutKind.Sequential)]
     public struct BITMAP
@@ -396,6 +473,25 @@ internal static class NativeMethods
         string lpFile, string lpParameters, string lpDirectory, int nShowCmd);
 
     public const int SW_SHOWNORMAL = 1;
+
+    /// <summary>
+    /// ShellExecute 的 runas 动词：走 UAC 提权后启动。
+    ///
+    /// 关于返回值：ShellExecute 的 HINSTANCE 返回 **≤ 32 都是错误码**，
+    /// 其中 5 = ERROR_ACCESS_DENIED。用户在弹出的 UAC 对话框里点"否"时
+    /// 拿到的正是 5 —— 那是一次正常的用户选择，不是故障，调用方必须静默处理，
+    /// 不能弹错误框（否则每次取消提权都要被提示一次）。
+    /// </summary>
+    public const string VERB_RUNAS = "runas";
+
+    /// <summary>ShellExecute 成功时返回值的下界：> 32 才算成功。</summary>
+    public const int ShellExecuteSuccessThreshold = 32;
+
+    /// <summary>ERROR_ACCESS_DENIED，runas 被用户取消时 ShellExecute 的返回值。</summary>
+    public const int ERROR_ACCESS_DENIED = 5;
+
+    /// <summary>ERROR_CANCELLED，部分 UAC 路径下取消时返回这个而不是 5。</summary>
+    public const int ERROR_CANCELLED = 1223;
 
     /// <summary>取得 WPF 窗口的 Win32 HWND。</summary>
     public static IntPtr GetHwnd(Window window)
