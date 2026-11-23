@@ -394,16 +394,23 @@ function Invoke-GitCommitPush {
     Step '提交版本号并推送'
     $changed = & git -C $Root -c core.quotepath=false status --porcelain
     Assert-LastExit 'git status'
+
+    # 注意：这里**不能**在没有改动时直接 return —— 那会把后面的推送一起跳过。
+    # 2026-11-23 发布 v1.0.7 时就是这么踩的：版本号在构建前就写好了（工作区干净），
+    # 于是"跳过提交"连带"跳过推送"，而第 9 步照样用 gh 建了 Release，
+    # tag 打在了**上一个**提交上，本次功能提交根本没上传。
+    # 提交可以跳，推送不能跳。
     if (-not $changed) {
-        Warn '没有文件改动，跳过提交'
-        return
+        Warn '没有文件改动，跳过提交（推送照常进行）'
     }
-    Write-Host $changed
-    & git -C $Root -c core.quotepath=false add -A
-    Assert-LastExit 'git add'
-    & git -C $Root -c core.quotepath=false commit -m "发布 $Version"
-    Assert-LastExit 'git commit'
-    Ok '已提交'
+    else {
+        Write-Host $changed
+        & git -C $Root -c core.quotepath=false add -A
+        Assert-LastExit 'git add'
+        & git -C $Root -c core.quotepath=false commit -m "发布 $Version"
+        Assert-LastExit 'git commit'
+        Ok '已提交'
+    }
 
     if ($NoPush) { Warn '（-NoPush：不推送）'; return }
 
@@ -491,6 +498,23 @@ function Test-EndToEnd {
     Info ("tag={0} draft={1} prerelease={2}" -f $meta.tagName, $meta.isDraft, $meta.isPrerelease)
     foreach ($a in $meta.assets) { Info ("附件 {0} {1} 字节" -f $a.name, $a.size) }
     if ($meta.assets.Count -ne 2) { Warn "附件数量是 $($meta.assets.Count)，期望 2" }
+
+    # tag 必须指向本次发布对应的提交。
+    # 2026-11-23 发 v1.0.7 时踩过：提交被跳过、推送也没做，Release 照样建成功，
+    # 于是 tag 落在**上一个**提交上，下载页看着一切正常，但源码根本不是这一版。
+    # 只核对"Release 存在"是不够的，必须核对它指向哪个 commit。
+    $tagRef = (& git -C $Root rev-parse "v$Version^{commit}" 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        Warn "本地没有 v$Version 这个 tag（gh 只在远端建 tag，不会写回本地；需要 git fetch --tags）"
+    }
+    else {
+        $tagSha = $tagRef.Trim()
+        $headSha = (& git -C $Root rev-parse HEAD).Trim()
+        if ($tagSha -ne $headSha) {
+            Die "tag v$Version 指向 $tagSha，但 HEAD 是 $headSha —— Release 打在了别的提交上"
+        }
+        Ok "tag v$Version -> $tagSha（与 HEAD 一致）"
+    }
 
     Remove-Item $tmp -Force -ErrorAction SilentlyContinue
     Ok "Release 地址 $ReleaseUrl"
