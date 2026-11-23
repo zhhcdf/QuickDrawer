@@ -2,18 +2,21 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="QuickDrawer 设置"
-        Width="460" Height="780"
+        Width="460" Height="832"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize"
         Background="{DynamicResource DialogBackground}"
         Closed="Window_Closed">
 
     <Grid Margin="16">
-        <!-- 9 行：0 宽度 / 1 唤出热键 / 2 截图热键 / 3 便签字号 / 4 拉手 / 5 收起延迟 / 6 助手缩放 / 7 预设（占满）/ 8 状态
+        <!-- 10 行：0 宽度 / 1 唤出热键 / 2 截图热键 / 3 便签字号 / 4 拉手 / 5 收起延迟 / 6 助手缩放 / 7 默认助手 / 8 预设（占满）/ 9 状态
              2026-11-01（三次）删掉「开机自启」那行后全部上移一行；
              2026-11-01（七次）在热键下面插入「截图热键」一行，其后的行再下移一行；
-             2026-11-03 在截图热键下面插入「便签字号」一行，其后的行再下移一行。 -->
+             2026-11-03 在截图热键下面插入「便签字号」一行，其后的行再下移一行；
+             2026-11-23 在助手缩放下面插入「默认助手」一行，预设与状态再下移一行
+                        （窗口高度同步 780 → 832，否则新增这一行会把预设区挤扁）。 -->
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -168,8 +171,19 @@
                        Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"/>
         </StackPanel>
 
+        <!-- 默认助手（2026-11-23 用户需求："可选默认加载AI助手页，选择的助手页调整到标签最左侧"） -->
+        <StackPanel Grid.Row="7" Margin="0,14,0,0">
+            <TextBlock Text="默认助手页" Foreground="{DynamicResource TextPrimary}" FontSize="13" Margin="0,0,0,6"/>
+            <!-- 单选按钮在 code-behind 里按 AssistantProviders.All 生成：
+                 站点是配置驱动的，写死在 XAML 里以后加站点必漏改一处。 -->
+            <StackPanel x:Name="DefaultAssistantBar" Orientation="Horizontal"/>
+            <TextBlock x:Name="DefaultAssistantHint"
+                       Text="启动后直接加载这个站点，并把它排到助手页标签最左侧；应用启动时在后台先把它建好，点开就不用等"
+                       Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+
         <!-- 预设提示词编辑器（2026-10-31 七次） -->
-        <GroupBox Grid.Row="7" Header="悬浮按钮预设提示词"
+        <GroupBox Grid.Row="8" Header="悬浮按钮预设提示词"
                   Foreground="{DynamicResource TextPrimary}" FontSize="13"
                   BorderBrush="{DynamicResource ControlFillStrong}" Padding="8" Margin="0,14,0,0">
             <Grid>
@@ -257,7 +271,7 @@
         </GroupBox>
 
         <!-- 底部状态 -->
-        <TextBlock x:Name="StatusText" Grid.Row="8"
+        <TextBlock x:Name="StatusText" Grid.Row="9"
                    Text="改动即时生效并保存"
                    Foreground="{DynamicResource TextMuted}" FontSize="11"
                    HorizontalAlignment="Center"/>

@@ -1,9 +1,13 @@
+using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using QuickDrawer.Assistant;
 
 namespace QuickDrawer;
 
@@ -82,6 +86,11 @@ public partial class SettingsWindow : Window
         RefreshValueLabels();
 
         LoadPresets();
+
+        // 默认助手页（2026-11-23）：控件在代码里按站点列表生成，必须在 _loading 解除前建好，
+        // 否则第一个 RadioButton 的 IsChecked=true 会触发 Checked → 写配置 + 重排标签，
+        // 也就是"打开设置页就顺手改了一次配置"。
+        BuildDefaultAssistantBar();
 
         _loading = false;   // 防护解除，之后的 ValueChanged 是用户操作
     }
@@ -402,6 +411,64 @@ public partial class SettingsWindow : Window
 
         // 立刻重算缩放：开启时按当前宽度比例放大，关闭时回到基础缩放
         _owner.RefreshAssistantZoom();
+
+        SaveAndApply();
+    }
+
+    /* ---------- 默认助手页（2026-11-23 用户需求） ---------- */
+
+    /// <summary>
+    /// 按内置站点列表生成「默认助手页」的几个单选按钮。
+    ///
+    /// 为什么不写在 XAML 里：站点是配置驱动的（`AssistantProviders.All`），
+    /// 以后加站点时若这里写死一遍，必漏改一处 —— 到时候设置页里没有新站点，
+    /// 用户没法把它设成默认，而界面上看不出任何异常。
+    /// </summary>
+    private void BuildDefaultAssistantBar()
+    {
+        DefaultAssistantBar.Children.Clear();
+
+        bool first = true;
+        foreach (AssistantProvider provider in AssistantProviders.All)
+        {
+            var chip = new RadioButton
+            {
+                Content = provider.Name,
+                Tag = provider.Id,
+                GroupName = "DefaultAssistant",
+                Foreground = (Brush)FindResource("TextPrimary"),
+                FontSize = 13,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Margin = first ? new Thickness(0) : new Thickness(14, 0, 0, 0),
+                IsChecked = string.Equals(provider.Id, _config.Assistant.DefaultProviderId, StringComparison.OrdinalIgnoreCase)
+            };
+            AutomationProperties.SetName(chip, "DefaultAssistant:" + provider.Id);
+            chip.Checked += DefaultAssistantChip_Checked;
+
+            DefaultAssistantBar.Children.Add(chip);
+            first = false;
+        }
+    }
+
+    private void DefaultAssistantChip_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_loading || sender is not RadioButton { Tag: string id })
+        {
+            return;
+        }
+
+        AssistantProvider? provider = AssistantProviders.ById(id);
+        if (provider is null)
+        {
+            return;
+        }
+
+        _config.Assistant.DefaultProviderId = provider.Id;
+
+        // 当场生效：重排助手页标签 + 若助手页正开着就切过去。
+        // 默认助手本来就是"下次启动用哪个"，但用户改完就想立刻看到效果，
+        // 让他重启一次才能确认，是很差的体验。
+        _owner.ApplyDefaultAssistant(startup: false);
 
         SaveAndApply();
     }

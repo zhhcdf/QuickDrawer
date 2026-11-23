@@ -125,6 +125,61 @@ internal sealed class AssistantService : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// 后台预加载某个站点（2026-11-23 用户需求：「助手在应用启动后后台自动加载默认助手」）。
+    ///
+    /// 与 <see cref="EnsureAsync"/> 的唯一区别：**不激活**，控件保持 Collapsed。
+    /// 这样应用一启动就能把 WebView2 内核建起来并开始导航，
+    /// 用户真正切到助手页时页面已经在那儿了，省掉首屏 1–3 秒的空白。
+    ///
+    /// 为什么不直接调 EnsureAsync 再 Hide()：那会短暂把站点设为 Visible 再收起，
+    /// 面板若正开着（启动时 ShowAnimated 会展开），用户会看到一闪。
+    /// </summary>
+    public async Task<bool> PreloadAsync(AssistantProvider provider)
+    {
+        if (_disposed)
+        {
+            return false;
+        }
+
+        Site site = GetOrCreateSite(provider);
+
+        if (site.View.CoreWebView2 is null)
+        {
+            try
+            {
+                CoreWebView2Environment env = await GetEnvironmentAsync();
+                await site.View.EnsureCoreWebView2Async(env);
+                WireCore(site);
+            }
+            catch (WebView2RuntimeNotFoundException ex)
+            {
+                LastError = "未安装 Microsoft Edge WebView2 Runtime。\n" +
+                            "下载：https://developer.microsoft.com/microsoft-edge/webview2/\n\n" +
+                            ex.Message;
+                _log("webview2 runtime not found (preload)");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                LastError = $"{ex.GetType().Name}: {ex.Message}";
+                _log($"webview2 preload failed ({provider.Id}): {LastError}");
+                return false;
+            }
+        }
+
+        if (!site.Navigated && site.View.CoreWebView2 is not null)
+        {
+            site.Navigated = true;
+            _log($"preload {provider.Id} -> {provider.Url} (zoom {EffectiveZoomFor(provider):0.00})");
+            site.View.CoreWebView2.Navigate(provider.Url);
+        }
+
+        // 预加载也会占用常驻名额，空闲计时器要跟着起来，否则永远不释放。
+        StartIdleTimer();
+        return true;
+    }
+
     /// <summary>离开助手页：只隐藏控件，不销毁——页面在时限内继续常驻。</summary>
     public void Hide()
     {

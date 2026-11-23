@@ -65,6 +65,24 @@ $win = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $cond)
 if (-not $win) { throw "QuickDrawer window not found" }
 Write-Host "panel: $($win.Current.Name)"
 
+# 先确保在"便签"页 —— 这两道门禁假定当前是便签页，但抽屉上次停在哪个标签
+# 取决于之前跑过什么（比如刚跑完助手页门禁就停在助手页）。
+# 不补这一步，会以 "no visible note body" 报错，看着像功能回归，其实是前置条件没满足。
+# 注意：TabNotes 的标识在 AutomationId 里（Name 是"📝 便签"），
+# 而 TabAssistant 的标识在 Name 里（XAML 里显式写了 AutomationProperties.Name）。
+# 两个标签写法不一致，只查 Name 会找不到 —— 用 Or 两种都查。
+$tabCond = New-Object System.Windows.Automation.OrCondition(
+    (New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'TabNotes')),
+    (New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty, 'TabNotes')))
+$tab = $win.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $tabCond)
+if ($tab) {
+    $tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    Start-Sleep -Milliseconds 600
+}
+$win = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $cond)
+
 $textCond = New-Object System.Windows.Automation.AndCondition(
     (New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,

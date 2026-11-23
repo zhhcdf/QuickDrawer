@@ -1007,7 +1007,10 @@
                             </Grid.RowDefinitions>
 
                             <DockPanel Grid.Row="0" Margin="0,0,0,4" LastChildFill="False">
-                                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                                <!-- 站点标签栏（2026-11-23 用户需求：选中的站点排到最左）。
+                                     顺序在运行时由 DrawerWindow.ApplyAssistantChipOrder() 调整 ——
+                                     这里写死的 XAML 顺序只是初值，启动后会被重排。 -->
+                                <StackPanel x:Name="AssistantChipBar" DockPanel.Dock="Left" Orientation="Horizontal">
                                     <RadioButton x:Name="ChipDeepSeek" Tag="deepseek" Content="DeepSeek"
                                                  GroupName="AssistantProvider"
                                                  Style="{StaticResource ProviderChip}"

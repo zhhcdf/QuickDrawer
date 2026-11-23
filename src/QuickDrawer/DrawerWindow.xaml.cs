@@ -230,6 +230,11 @@ public partial class DrawerWindow : Window
         // 2026-10-30 需求：任何地方选中文字后弹提示词按钮
         StartSelectionWatcher();
 
+        // 2026-11-23 用户需求：启动时按"默认助手"决定用哪个站点、排到最左、后台预加载。
+        // 必须在 ShowAnimated() 之前跑：标签顺序要在面板第一次展开时就正确，
+        // 否则用户会看到标签先按旧顺序画一遍再跳。
+        ApplyDefaultAssistant(startup: true);
+
         ShowAnimated();
 
         // 抽屉拉手（决策 #5）：主面板收起时贴在屏幕右边缘
@@ -2293,6 +2298,7 @@ public partial class DrawerWindow : Window
 
     private async void AssistantChip_Checked(object sender, RoutedEventArgs e)
     {
+        // _syncingChips：由代码同步勾选状态时不要把用户的"上一次在看哪个"写回磁盘。
         if (_syncingChips || sender is not RadioButton { Tag: string id })
         {
             return;
@@ -2454,6 +2460,11 @@ public partial class DrawerWindow : Window
 
     private void UpdateAssistantChips(string providerId)
     {
+        // 2026-11-23 用户需求「选择的助手页调整到标签最左侧」。
+        // 必须在设 IsChecked 之前重排：重排要把控件从可视树里摘出来再插回去，
+        // 先设勾选态再摘会触发 RadioButton 的分组互斥，把刚设的勾掉。
+        ApplyAssistantChipOrder(providerId);
+
         _syncingChips = true;
         try
         {
@@ -2465,6 +2476,152 @@ public partial class DrawerWindow : Window
         finally
         {
             _syncingChips = false;
+        }
+    }
+
+    /// <summary>
+    /// 把当前站点排到标签栏最左，其余按内置站点的固定顺序跟随
+    /// （2026-11-23 用户需求：「选择的助手页调整到标签最左侧」）。
+    ///
+    /// 为什么重排而不是在 XAML 里按情况写两套布局：站点是配置驱动的，
+    /// 以后加站点时双份布局必漏改一处。重排只依赖 Tag，与 XAML 顺序解耦。
+    ///
+    /// 首项的左边距必须归零：XAML 里后几个 chip 各带 Margin="4,0,0,0"，
+    /// 换到首位后那个 4px 会变成"标签栏凭空多出一点左边距"，看着像没对齐。
+    /// </summary>
+    private void ApplyAssistantChipOrder(string providerId)
+    {
+        if (AssistantChipBar is null)
+        {
+            return;   // XAML 解析阶段（同 TabNotes_Checked 的判空）
+        }
+
+        var order = new List<string> { providerId };
+        foreach (AssistantProvider p in AssistantProviders.All)
+        {
+            if (!string.Equals(p.Id, providerId, StringComparison.OrdinalIgnoreCase))
+            {
+                order.Add(p.Id);
+            }
+        }
+
+        var byId = new Dictionary<string, RadioButton>(StringComparer.OrdinalIgnoreCase);
+        foreach (UIElement child in AssistantChipBar.Children)
+        {
+            if (child is RadioButton { Tag: string tag } chip)
+            {
+                byId[tag] = chip;
+            }
+        }
+
+        AssistantChipBar.Children.Clear();
+
+        int index = 0;
+        foreach (string id in order)
+        {
+            if (!byId.TryGetValue(id, out RadioButton? chip))
+            {
+                continue;
+            }
+
+            chip.Margin = index == 0 ? new Thickness(0) : new Thickness(4, 0, 0, 0);
+            AssistantChipBar.Children.Add(chip);
+            index++;
+        }
+    }
+
+    /// <summary>
+    /// 应用"默认助手"（2026-11-23 用户需求：
+    /// 「可选默认加载AI助手页，选择的助手页调整到标签最左侧。
+    ///   助手在应用启动后后台自动加载默认助手」）。
+    ///
+    /// 两条路径：
+    /// - <paramref name="startup"/> = true：开机/启动时调用，以 settings 里的
+    ///   `assistant.defaultProviderId` 为准，覆盖 `activeProviderId`（后者只是"上次在看哪个"），
+    ///   排好标签顺序，并在后台把 WebView2 预先建起来。
+    /// - <paramref name="startup"/> = false：设置页里改了默认助手，当场生效
+    ///   （重排标签 + 若助手页正开着就切过去），但**不预加载**——用户此刻可能正在用助手页，
+    ///   预加载会去建一个没被激活的实例，反而多占一份内存。
+    ///
+    /// 为什么启动时必须预加载而不仅是记住选择：用户点开助手页那一刻才建 WebView2，
+    /// 会先白 1–3 秒（要建内核、要导航、要等首字节）。提前在后台建好，
+    /// 切过去就是已成型的页面。
+    /// </summary>
+    internal void ApplyDefaultAssistant(bool startup)
+    {
+        string defaultId = _config.Assistant.DefaultProviderId;
+
+        // 配置里可能留着已下线站点的 id（比如手改过 config.json），
+        // 认不出来就退回内置第一个，别让"默认助手"变成一个空标签。
+        AssistantProvider provider = AssistantProviders.ById(defaultId) ?? AssistantProviders.All[0];
+
+        _config.Assistant.DefaultProviderId = provider.Id;
+
+        // 两种时机都要把 ActiveProviderId 切过去 —— 它决定"现在看的是哪个"，
+        // 也决定 EnsureAssistantPageAsync 回填标签顺序时用哪个站点。
+        //
+        // 2026-11-23 踩坑：非启动路径原来只重排标签、不改 ActiveProviderId，
+        // 紧接着 EnsureAssistantPageAsync 里 `ById(ActiveProviderId)` 拿到旧站点，
+        // 出来又调了一次 UpdateAssistantChips(旧站点)，把刚排好的顺序改了回来。
+        // 现象是"设置里选千问，助手页标签最左还是原来那个"，而 config.json 已经写对了。
+        _config.Assistant.ActiveProviderId = provider.Id;
+
+        if (startup)
+        {
+            // 启动时以默认助手为准：用户上次看的是 Kimi，但设置里默认是 DeepSeek，
+            // 那就应该从 DeepSeek 开始 —— 这正是"默认"两个字的含义。
+            DiagLog.Write("assistant", $"default provider = {provider.Id} (startup)");
+        }
+
+        // 重排 + 打勾：不依赖"助手页是否可见"，标签栏一开始就该是正确顺序。
+        UpdateAssistantChips(provider.Id);
+
+        if (startup)
+        {
+            // 不 await：加载要几秒，绝不能卡住 ShowAnimated 与窗口首帧。
+            _ = PreloadAssistantAsync(provider);
+        }
+        else if (_assistantVisible)
+        {
+            // 设置里改了默认助手且助手页正开着：立刻切过去，让用户当场看到结果。
+            _ = EnsureAssistantPageAsync();
+        }
+    }
+
+    /// <summary>
+    /// 后台预加载默认助手（2026-11-23）。失败只记日志、不弹提示 ——
+    /// 预加载是"提前备好"，用户还没要打开助手页，静默失败才是对的：
+    /// 等用户真的点开助手页时，EnsureAssistantPageAsync 会走一遍完整路径并显示错误。
+    /// </summary>
+    private async Task PreloadAssistantAsync(AssistantProvider provider)
+    {
+        // 现在这条路径叫 preload，等用户真的点标签/被 SendToAssistant 唤起时，
+        // EnsureAssistantPageAsync 会再调一次 EnsureAsync —— 那时 Navigated 已为 true，
+        // 只切 Visibility，不会重复导航。
+        try
+        {
+            if (!_config.Assistant.Enabled)
+            {
+                DiagLog.Write("assistant", "preload skipped (assistant disabled)");
+                return;
+            }
+
+            _assistant ??= new AssistantService(
+                AssistantHost,
+                _config,
+                msg => DiagLog.Write("assistant", msg),
+                UpdateAssistantWidenVisual);
+
+            ApplyAssistantZoomScale(Width);
+
+            bool ok = await _assistant.PreloadAsync(provider);
+            DiagLog.Write("assistant", ok
+                ? $"preloaded {provider.Id}"
+                : $"preload failed ({provider.Id}): {_assistant.LastError}");
+        }
+        catch (Exception ex)
+        {
+            DiagLog.Write("assistant", $"preload threw ({provider.Id}): {ex.GetType().Name}: {ex.Message}");
         }
     }
 

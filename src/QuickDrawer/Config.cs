@@ -262,6 +262,20 @@ public sealed class AssistantConfig
     [JsonPropertyName("activeProviderId")]
     public string ActiveProviderId { get; set; } = "deepseek";
 
+    /// <summary>
+    /// 默认助手站点（2026-11-23 用户需求：设置里可选默认加载哪个助手页）。
+    ///
+    /// 与 <see cref="ActiveProviderId"/> 的分工：
+    /// - ActiveProviderId 是"上次在看哪个"，随用户点站点标签而变；
+    /// - DefaultProviderId 是"启动时用哪个"，只在设置页改。
+    ///
+    /// 启动时以本项为准（会覆盖 ActiveProviderId），并把它排到站点标签最左，
+    /// 再于后台预加载该站点，用户切到助手页时页面已经在了。
+    /// 默认 deepseek —— 用户 2026-11-23 明确要求"初始默认助手设置为 DeepSeek"。
+    /// </summary>
+    [JsonPropertyName("defaultProviderId")]
+    public string DefaultProviderId { get; set; } = "deepseek";
+
     /// <summary>助手页"加宽"开关（仅助手页生效，切走自动回落）。</summary>
     [JsonPropertyName("widen")]
     public bool Widen { get; set; }
